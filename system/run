@@ -1512,6 +1512,21 @@ def customer_names(c):
     return names
 
 
+def company_incorporation_date(records):
+    """Use only an explicitly labelled company incorporation field.
+
+    A DOB field, support note, or KYC note may describe a natural person behind
+    the company.  Treating it as the company's incorporation date could create
+    an unsafe DOB or temporal clearance.
+    """
+    for record in records:
+        for field in ("incorporation_date", "incorporated_on", "registration_date"):
+            parsed = parse_date(record.get(field))
+            if parsed:
+                return parsed
+    return None
+
+
 # =============================================================================
 # Customer resolution
 # =============================================================================
@@ -1608,6 +1623,46 @@ def screened_fits(customer, screened, bank):
     return True
 
 
+def shared_contact_namesakes(records, bank):
+    """Return distinct same-name people sharing both contact identifiers.
+
+    A shared phone or address is not enough to merge people.  When both are
+    shared by a namesake with a conflicting DOB, or when the linked record has
+    no usable DOB, retain both candidates for separate evaluation. That can
+    only produce REVIEW/AMBIGUOUS; it cannot create a clearance.
+    """
+    out, seen = [], {record.get("record_id") for record in records}
+    for record in records:
+        if not is_person(record.get("entity_type")):
+            continue
+        phone = normalise_phone(record.get("phone"))
+        address = norm_space(strip_accents(str(record.get("address") or "")).lower())
+        dob = parse_date(record.get("dob"))
+        if not phone or not address:
+            continue
+        for other in bank.customers_by_phone.get(phone, []):
+            other_id = other.get("record_id")
+            if not other_id or other_id in seen:
+                continue
+            if bank.cluster_of.get(other_id, other_id) == bank.cluster_of.get(record.get("record_id"), record.get("record_id")):
+                continue
+            other_address = norm_space(strip_accents(str(other.get("address") or "")).lower())
+            other_dob = parse_date(other.get("dob"))
+            if address != other_address or not other_dob or not other_dob.has_full():
+                continue
+            # If the linked record has no usable DOB, a same-contact namesake
+            # is still unresolved.  If it has one, require a hard conflict so
+            # two records of the same person are not split accidentally.
+            if dob and dob.has_full() and not dob.contradicts(other_dob):
+                continue
+            if not bank.ns.any_agree(customer_names(record), customer_names(other), company=False):
+                continue
+            seen.add(other_id)
+            out.append(other)
+    out.sort(key=lambda record: record.get("record_id") or "")
+    return out
+
+
 def seed_records(alert, bank):
     """Follow the alert's link; if it leads to several people, screened details pick."""
     seeds, seen = [], set()
@@ -1645,6 +1700,13 @@ def seed_records(alert, bank):
         # no link: search customers that fit what was screened
         return unlinked_search(screened, bank)
 
+    # Do not merge a same-address, same-phone namesake whose DOB conflicts or
+    # whose linked record lacks a usable DOB. Keep both candidate people so
+    # downstream policy resolution can return AMBIGUOUS_CUSTOMER_RECORD.
+    namesakes = shared_contact_namesakes(seeds, bank)
+    namesake_ids = {record.get("record_id") for record in namesakes}
+    seeds.extend(namesakes)
+
     # A link can lead to more than one person; screened details then pick.
     # If only one seed so far, keep it (expand later). If several, filter.
     # Distinct people? We'll filter when more than one seed record does not
@@ -1653,7 +1715,9 @@ def seed_records(alert, bank):
     if len(seeds) > 1 and len(clusters) > 1:
         fitted = [c for c in seeds if screened_fits(c, screened, bank)]
         if fitted:
-            return fitted
+            # A full screened DOB normally selects one joint holder, but it
+            # cannot erase a separately recorded same-contact namesake.
+            return fitted + [c for c in seeds if c.get("record_id") in namesake_ids and c not in fitted]
         # if none fit, don't use another customer's records: return empty? or all?
         # "Never use another customer's records." If we can't pick, treat as all
         # candidates and later AMBIGUOUS. Keep seeds (they're from the link).
@@ -1773,11 +1837,23 @@ def build_person(records, bank, screened=None):
         etype = (records[0].get("entity_type") if records else None) or (
             (screened or {}).get("entity_type")
         )
+    # A note about a company describes a person behind it (a director's name or
+    # date of birth), never the company's identity. For a company only the
+    # provider's approved check (a registry extract) is verified evidence.
+    if etype == "Company" and ident and ident.get("source") == "note":
+        ident = latest_approved_identity(bank, records, [])
     verified_name = ident["verified_name"] if ident else None
     verified_dob = ident["verified_dob"] if ident else None
     dob = verified_dob or (declared_dobs[0] if declared_dobs else None)
-    # incorporation date for companies: declared dob / verified_dob
-    incorp = dob if etype == "Company" else None
+    # Incorporation date: an explicitly labelled field first; otherwise the
+    # approved registry check, or the company record's own date field (this
+    # data stores incorporation there). Never a date from a note, so a person's
+    # date of birth cannot become a company's incorporation date.
+    incorp = None
+    if etype == "Company":
+        incorp = company_incorporation_date(records) or (
+            ident["verified_dob"] if ident and ident.get("source") == "kyc" and ident.get("verified_dob") else None
+        ) or next((d for d in declared_dobs if d), None)
     rec_ids = [c["record_id"] for c in records]
     return {
         "records": records,

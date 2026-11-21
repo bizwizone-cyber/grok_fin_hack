@@ -43,6 +43,8 @@ The comparison is Splink-inspired and stdlib-only: each field (name, date of bir
 2. If that link leads to more than one person, the screened name, date of birth, country and city pick between them (principle 2). Without a link, those same screened details are used to search the system of record. We never use another customer's records.
 3. Records that share a phone number **and** the same full date of birth, or the same document number on approved identity checks, belong to one person, transitively (principle 3). A shared phone or address alone does not merge them.
 4. The most recent **approved** identity check of that person supplies the verified legal name, date of birth and document country, whether it sits in `kyc_checks` or only in an onboarding note. Rejected and expired checks are ignored. A KYC-team note counts as a passed check unless it records a failure, so the failure wording is deliberately wide: rejected, failed, declined, inconclusive, on hold, awaiting, sent for review, resubmit, unreadable, expired or past expiry, suspected fraud or tampering, "could not verify", "did not match" and similar. Words that also appear in passed notes ("expiry 2031", "no signs of fraud") only count inside a phrase that states a failure. A failed check misread as passed could clear a real match, so this errs towards ignoring the note. Verified values beat declared ones.
+   - **Companies:** a note about a company describes a person behind it (a director's name or date of birth), so a company's verified facts come only from the provider's approved registry check, never from a note. Its incorporation date is an explicitly labelled incorporation field if there is one, otherwise the approved registry check or the company record's own date field. A director's date of birth can therefore never become an incorporation date (which could clear a real match on `DOB_MISMATCH` or `TEMPORAL_IMPOSSIBILITY`).
+   - **Same-contact namesakes:** a same-name record that shares both phone and address but has a conflicting date of birth (a "Jr") is not merged, and is kept as a second candidate, so the hit can only end in `REVIEW` with `AMBIGUOUS_CUSTOMER_RECORD`, never a clearance.
 5. Countries tied to the customer are residence and nationality on all of their records, the approved identity-document country, and places the notes say they lived. In free text a country name may be followed by any punctuation, so "passport (Bangladesh)" and "in Austria: 2008" both count.
 6. If more than one person still fits the alert, we decide the hit for each. If they all lead to the same decision, we give it; otherwise the decision is `REVIEW` with `AMBIGUOUS_CUSTOMER_RECORD`. Either way `customer_record_id` is `AMBIGUOUS`. When one person has several records, any of them is accepted.
 
@@ -111,6 +113,7 @@ No alert link. A search on the screened name, year of birth and country finds tw
 ```
 system/run dev output/dev.jsonl
 python3 validate.py --data dev --output output/dev.jsonl --score dev/practice_labels.jsonl
+python3 system/test_safety_regressions.py
 ```
 
 On the 50 practice labels this system scores **100.0**, with **0 unsafe clearances**, and every right decision has an accepted reason code and customer record.

@@ -11,6 +11,7 @@ Project: `grok-fin-hack` · ref `uqqrzlonhbipdisgfeca` · https://uqqrzlonhbipdi
 | `schema.sql` | tables `runs`, `decisions`, `analyst_reviews`, indexes, RLS (already applied) |
 | `push_run.py` | stdlib: run `system/run` (or take an output file), time it, record git commit, bulk-insert via REST |
 | `index.html` | single static page, supabase-js from CDN, publishable key embedded (public by design) |
+| `functions/tavily-research/index.ts` | Supabase Edge Function (deployed, `verify_jwt=false`): Tavily web search for one hit |
 | `.env.example` | placeholders; copy to `dashboard/.env` (git-ignored) |
 
 ## Open the dashboard
@@ -37,3 +38,13 @@ The anon (publishable) key can SELECT `runs`, `decisions`, `analyst_reviews` and
 (constrained: valid decision and reason code, name ≤ 80 chars, note ≤ 2000). Anyone with the page/key can read the
 output rows (customer record ids and reason text) and add reviews. Before using anything real: add Supabase Auth,
 restrict policies to `authenticated`, and drop the `demo_anon_*` policies. Don't point it at real customer data.
+
+## Research with Tavily (analyst support only)
+Hit drawer → **Research with Tavily**. The page calls the edge function `tavily-research` `{run_id, hit_id}`; it reads the hit's
+reason text (service role), builds `listed name + countries + "sanctions OR PEP OR fraud"`, calls Tavily (basic depth, answer on,
+max 5 results), stores the result in `web_research` (anon: select only) and the drawer lists current + previous research with
+timestamps. **Labelled "External web research — analyst support only, not used by the screening decision"**: it never touches
+`system/run`, `output/` or any decision. The Tavily key is held server-side only (function env `TAVILY_API_KEY`, or the private
+`app_secrets` table that has RLS on and no policies); it is never in the page or repo.
+Limits: same hit once per 60 s, 30 researches/min overall, 5 results; ~4% of hits (35/819) have no listed name in the reason text
+(e.g. "no listed name" cases) and return a clear message instead of a search. Anyone with the page can trigger a search (demo only).
