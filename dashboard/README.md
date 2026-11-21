@@ -25,7 +25,7 @@ Refresh the page and the new run appears in the run selector with its date, time
 2. Deploy the function: `supabase functions deploy tavily-research --no-verify-jwt --project-ref <ref>`
    (source in `dashboard/functions/tavily-research/index.ts`).
 3. Add the secret `TAVILY_API_KEY` under Edge Functions > Secrets (a key from app.tavily.com, starts with `tvly-`).
-4. Put your project URL and publishable key at the top of `dashboard/index.html`.
+4. Put your project URL and publishable key in `dashboard/index.html` (`SUPABASE_URL` and `SUPABASE_KEY`, around line 115).
 
 **Rules:** the dashboard and Tavily never change a decision. `system/run` stays standard-library only and offline.
 Web research is shown to the analyst as context; only a human review records a different outcome.
