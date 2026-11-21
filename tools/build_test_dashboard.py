@@ -37,8 +37,8 @@ DEFAULT_SYNTH = Path.home() / "Downloads" / "synthetic_screening_benchmark" / "s
 
 VERSIONS = [
     ("baseline", "Before hardening", "43fb0f1", "Rules engine as it stood at 15:00, before the red team and before main's hardening."),
-    ("nongrok", "Non-Grok (main)", "f4ebeb5", "Main without the red team: hand hardening (date formats, crash-safe fallback, stricter death rules, trimmed evidence) and Amin's company/namesake safety rules."),
-    ("grok", "Grok red team + main", "grok-redteam", "Everything on main plus the fixes found by the Grok red team, per-ground evidence, and a narrower company rule that keeps registry incorporation dates."),
+    ("nongrok", "Non-Grok (team main before red team)", "f4ebeb5", "Main without the red team: hand hardening (date formats, crash-safe fallback, stricter death rules, trimmed evidence) and Amin's company/namesake safety rules."),
+    ("grok", "Final: Grok red team + main", "main", "The submitted version: the team's main plus the fixes found by the Grok red team, per-ground evidence, and a company rule that keeps registry incorporation dates."),
 ]
 
 SCENARIOS = {
@@ -141,7 +141,8 @@ def main(argv=None):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         for key, label, ref, blurb in VERSIONS:
-            commit = git("rev-parse", "--short", ref).strip()
+            # the last commit that changed the scored code, not a docs commit
+            commit = git("log", "-1", "--format=%h", ref, "--", "system/run").strip()
             script = tmp / f"{key}.py"
             script.write_text(git("show", f"{ref}:system/run"), encoding="utf-8")
             print(f"{label} ({commit}) ...", file=sys.stderr)

@@ -6,42 +6,50 @@ For every sanctions, PEP or adverse-media hit raised against a customer, decide 
 
 **Code freeze is at 17:00.** Submit through the portal by then.
 
+## Final version at a glance
+
+- **Entry point:** `system/run <data folder> <output file>`. Python 3 standard library only, no model calls, about 18 s for the 819 dev hits, byte-identical from run to run. Architecture, evidence rules and example cases: [`system/README.md`](system/README.md).
+- **Practice labels:** 50/50 right, 0 unsafe clearances, reason codes and customer records 100%, evidence equal to the reference on 50/50.
+- **Grok red team:** [`tools/grok_redteam.py`](tools/grok_redteam.py) has Grok (`x-ai/grok-4.7`) rewrite the free text the system reads; it found 27 unsafe misreadings and one real wrong clearance on dev, all fixed, with a person approving every vocabulary change. Grok never decides a hit.
+- **Dashboards** (demo, not part of the scored run): [review dashboard](https://bizwizone-cyber.github.io/grok_fin_hack/dashboard/index.html) for analysts (review queue, analyst decisions, Tavily research), and [test results](https://bizwizone-cyber.github.io/grok_fin_hack/dashboard/tests.html) comparing versions on every test (practice labels, a 10,000-hit synthetic benchmark, the red team).
+- **Safety regressions:** `python3 system/test_safety_regressions.py`.
+
 ---
 
 ## Task list
 
 ### Setup (by 12:30)
-- [ ] Download the Track 2 dataset and unzip it locally into `dev/`. Never commit it.
-- [ ] Read `POLICY.md` and copy the real reason codes into the `REASON_CODES` table in `system/run`
-- [ ] Look through `practice_labels.jsonl` (50 answered hits) and note the route through the files for each type of case
-- [ ] Map the real field names in `system/run`, which are kept in one section
-- [ ] Baseline: run `validate.py` on a "send everything to REVIEW" output. It should score 0.
+- [x] Download the Track 2 dataset and unzip it locally into `dev/`. Never commit it.
+- [x] Read `POLICY.md` and copy the real reason codes into the `REASON_CODES` table in `system/run`
+- [x] Look through `practice_labels.jsonl` (50 answered hits) and note the route through the files for each type of case
+- [x] Map the real field names in `system/run`, which are kept in one section
+- [x] Baseline: run `validate.py` on a "send everything to REVIEW" output. It should score 0.
 
 ### Who is the customer? (12:30 to 14:00)
-- [ ] Follow the alert link (account, login or email) through `accounts` to `customers`, including duplicate or old records
-- [ ] Follow `onboarding` to `kyc_checks` and use **only checks that passed**. Verified details beat declared ones.
-- [ ] Use `notes` (filed by email) for previous addresses and other context
-- [ ] Group candidate records into distinct people by verified date of birth plus name, **not** by phone or address
-- [ ] If more than one person fits, set `customer_record_id = AMBIGUOUS`. Still clear the hit if every candidate contradicts it.
+- [x] Follow the alert link (account, login or email) through `accounts` to `customers`, including duplicate or old records
+- [x] Follow `onboarding` to `kyc_checks` and use **only checks that passed**. Verified details beat declared ones.
+- [x] Use `notes` (filed by email) for previous addresses and other context
+- [x] Group candidate records into distinct people by verified date of birth plus name, **not** by phone or address
+- [x] If more than one person fits, set `customer_record_id = AMBIGUOUS`. Still clear the hit if every candidate contradicts it.
 
 ### Who is the listed person? (14:00 to 15:00)
-- [ ] Take the structured fields: dates of birth, aliases, countries, entity type, deceased
-- [ ] Parse ages from profile notes, e.g. "aged 45 when sentenced in March 2019", which gives a birth year of 1973 or 1974
-- [ ] Pull "born", "died" and "incorporated" years from free text
-- [ ] Use `search_results` only when a result is clearly about this listed person, since most are about namesakes
+- [x] Take the structured fields: dates of birth, aliases, countries, entity type, deceased
+- [x] Parse ages from profile notes, e.g. "aged 45 when sentenced in March 2019", which gives a birth year of 1973 or 1974
+- [x] Pull "born", "died" and "incorporated" years from free text
+- [x] Use `search_results` only when a result is clearly about this listed person, since most are about namesakes
 
 ### Decisions (15:00 to 16:15)
 - [ ] 15:00: show progress to the mentors at office hours
-- [ ] Write the rule order (see below) and use the Splink-style field comparisons
-- [ ] Reason text built from this hit's own facts, stating what's missing
-- [ ] Evidence lists **only** the record IDs that decided the hit
-- [ ] Score against the practice labels with `validate.py --score dev/practice_labels.jsonl` and fix any unsafe clearances first
+- [x] Write the rule order (see below) and use the Splink-style field comparisons
+- [x] Reason text built from this hit's own facts, stating what's missing
+- [x] Evidence lists **only** the record IDs that decided the hit
+- [x] Score against the practice labels with `validate.py --score dev/practice_labels.jsonl` and fix any unsafe clearances first
 
 ### Finish (16:15 to 17:00)
-- [ ] Generate `output/dev.jsonl` with the system itself
-- [ ] Run it twice and diff the outputs to prove it's deterministic
-- [ ] Complete `system/README.md`: architecture diagram, resolution steps, evidence, determinism, run time, and three example cases (a mismatch, a match, a review)
-- [ ] Check `.gitignore` covers `dev/`, data and keys, then push the final commit
+- [x] Generate `output/dev.jsonl` with the system itself
+- [x] Run it twice and diff the outputs to prove it's deterministic
+- [x] Complete `system/README.md`: architecture diagram, resolution steps, evidence, determinism, run time, and three example cases (a mismatch, a match, a review)
+- [x] Check `.gitignore` covers `dev/`, data and keys, then push the final commit
 - [ ] Record the video demo
 - [ ] Submit the repo link and project name through the [submission portal](https://gb-fincrime-hackathon-11-2026.teamdeel.workers.dev/submit)
 
