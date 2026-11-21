@@ -20,3 +20,7 @@ __pycache__/
 .venv/
 venv/
 fixture/
+
+# Dashboard secrets (keep the placeholder template tracked)
+dashboard/.env
+!dashboard/.env.example

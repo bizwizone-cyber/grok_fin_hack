@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sanctions Screening – Review Dashboard</title>
+<link rel="icon" href="data:,">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--bg:#f3f5f8;--card:#fff;--ink:#17202e;--mute:#667085;--line:#e3e8ef;--navy:#0b2545;--blue:#1d5fd1;
+        --green:#14804a;--greenbg:#e3f5ea;--red:#b42318;--redbg:#fde8e6;--amb:#a15c07;--ambbg:#fff1d6;}
+  *{box-sizing:border-box} body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--navy);color:#fff;padding:14px 24px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.2px} header small{color:#9db4d6;display:block;font-weight:400;font-size:12px}
+  header .grow{flex:1} header label{font-size:11px;color:#9db4d6;display:block;text-transform:uppercase;letter-spacing:.6px}
+  header select,header input{background:#143564;color:#fff;border:1px solid #2c4d80;border-radius:6px;padding:6px 8px;font:inherit}
+  main{max-width:1280px;margin:0 auto;padding:20px 24px 60px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;border-top:3px solid var(--line)}
+  .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute)} .kpi .v{font-size:26px;font-weight:650;margin-top:2px}
+  .kpi .s{font-size:12px;color:var(--mute)} .kpi.g{border-top-color:var(--green)} .kpi.r{border-top-color:var(--red)} .kpi.a{border-top-color:#e0a100} .kpi.b{border-top-color:var(--blue)}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 14px}
+  .tab{padding:9px 16px;cursor:pointer;border:0;background:none;font:inherit;color:var(--mute);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab.on{color:var(--navy);border-bottom-color:var(--blue);font-weight:600} .tab .n{background:var(--ambbg);color:var(--amb);border-radius:10px;padding:0 7px;font-size:11px;margin-left:5px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute);font-weight:600}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+  .filters label{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:2px}
+  .filters select,.filters input,.form select,.form input,.form textarea{border:1px solid #cdd5e0;border-radius:6px;padding:6px 8px;font:inherit;background:#fff;color:var(--ink);min-width:140px}
+  button.btn{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:inherit;cursor:pointer} button.btn:hover{background:#1750b3}
+  button.btn.sec{background:#fff;color:var(--ink);border:1px solid #cdd5e0} button.btn:disabled{opacity:.5;cursor:default}
+  table{width:100%;border-collapse:collapse} th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--mute);text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px;border-bottom:1px solid #eef1f5;vertical-align:top} tbody tr{cursor:pointer} tbody tr:hover{background:#f6f9ff}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+  .pill{display:inline-block;border-radius:10px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .SAME_ENTITY{background:var(--redbg);color:var(--red)} .DIFFERENT_ENTITY{background:var(--greenbg);color:var(--green)} .REVIEW{background:var(--ambbg);color:var(--amb)}
+  .code{color:var(--mute);font-size:12px} .trunc{max-width:520px;color:#344054}
+  .pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;margin-top:10px;color:var(--mute)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .bar{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px} .bar .lab{width:210px;text-align:right;color:#344054;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .trk{flex:1;background:#f0f3f8;border-radius:4px;height:18px;overflow:hidden;display:flex} .bar .seg{height:100%} .bar .num{width:44px;color:var(--mute)}
+  .seg.SAME_ENTITY{background:#e5655b} .seg.DIFFERENT_ENTITY{background:#3aa876} .seg.REVIEW{background:#e8b73b}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:6px} .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+  #drawer{position:fixed;top:0;right:0;width:min(520px,100%);height:100%;background:#fff;box-shadow:-8px 0 30px rgba(10,30,60,.18);transform:translateX(105%);transition:.2s;overflow:auto;padding:20px;z-index:10}
+  #drawer.open{transform:none} #drawer h2{margin:0 0 4px;font-size:16px} #drawer .x{position:absolute;right:14px;top:12px;border:0;background:none;font-size:22px;cursor:pointer;color:var(--mute)}
+  dl{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;margin:14px 0} dt{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.4px;padding-top:2px} dd{margin:0;word-break:break-word}
+  .chip{display:inline-block;background:#eef3fb;border:1px solid #d5e0f2;border-radius:5px;padding:1px 7px;margin:0 4px 4px 0}
+  .form{display:grid;grid-template-columns:1fr 1fr;gap:10px} .form .full{grid-column:1/-1} .form label{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:2px}
+  .form select,.form input,.form textarea{width:100%} .msg{padding:8px 10px;border-radius:6px;margin-top:8px;font-size:13px} .msg.ok{background:var(--greenbg);color:var(--green)} .msg.err{background:var(--redbg);color:var(--red)}
+  .empty{color:var(--mute);padding:24px;text-align:center} .note{font-size:12px;color:var(--mute);margin-top:6px}
+  .done{color:var(--green);font-size:12px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Sanctions Screening – Review Dashboard<small>Grok Bot London Financial Crime Hackathon · Track 2 · decisions from <span class="mono">system/run</span></small></h1></div>
+  <div class="grow"></div>
+  <div><label>Runs from</label><input type="date" id="fromDate"></div>
+  <div><label>Runs to</label><input type="date" id="toDate"></div>
+  <div><label>Run (date / time)</label><select id="runSel" style="min-width:300px"></select></div>
+</header>
+<main>
+  <div id="err" class="msg err" style="display:none"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabs">
+    <button class="tab on" data-t="hits">All hits</button>
+    <button class="tab" data-t="queue">Review queue <span class="n" id="qn">0</span></button>
+    <button class="tab" data-t="history">Review history</button>
+  </div>
+
+  <section id="t-hits">
+    <div class="grid2">
+      <div class="card"><h3>Decisions by reason code <span style="font-weight:400;text-transform:none">(current filters)</span></h3><div class="legend"><span><i style="background:#e5655b"></i>Confirmed (SAME_ENTITY)</span><span><i style="background:#3aa876"></i>Cleared (DIFFERENT_ENTITY)</span><span><i style="background:#e8b73b"></i>Review</span></div><div id="chart"></div></div>
+      <div class="card"><h3>Filters</h3>
+        <div class="filters">
+          <div><label>Decision</label><select id="fDec"><option value="">All</option><option value="DIFFERENT_ENTITY">Cleared (DIFFERENT_ENTITY)</option><option value="SAME_ENTITY">Confirmed (SAME_ENTITY)</option><option value="REVIEW">REVIEW</option></select></div>
+          <div><label>Reason code</label><select id="fCode"><option value="">All</option></select></div>
+          <div><label>Search alert / hit / customer</label><input id="fQ" placeholder="e.g. A-37F5DB"></div>
+        </div>
+        <div class="note">Runs and review history are filtered by the date range in the header. The dataset itself stays private – this dashboard only holds our output rows (decision, reason, evidence ids).</div>
+        <div class="note" id="cmp"></div>
+      </div>
+    </div>
+    <div class="card"><h3>Hits <span id="hitCount" style="font-weight:400;text-transform:none"></span></h3>
+      <table><thead><tr><th>Alert</th><th>Hit</th><th>Decision</th><th>Reason code</th><th>Customer record</th><th>Reason</th></tr></thead><tbody id="rows"></tbody></table>
+      <div class="pager"><button class="btn sec" id="prev">‹ Prev</button><span id="pg"></span><button class="btn sec" id="next">Next ›</button></div>
+    </div>
+  </section>
+
+  <section id="t-queue" style="display:none">
+    <div class="grid2">
+      <div class="card"><h3>Open review queue <span id="qcount" style="font-weight:400;text-transform:none"></span></h3>
+        <label style="font-size:12px;color:var(--mute)"><input type="checkbox" id="qOpen" checked> hide hits already reviewed</label>
+        <table><thead><tr><th>Alert</th><th>Hit</th><th>Reason code</th><th></th></tr></thead><tbody id="qrows"></tbody></table>
+        <div class="pager"><button class="btn sec" id="qprev">‹ Prev</button><span id="qpg"></span><button class="btn sec" id="qnext">Next ›</button></div>
+      </div>
+      <div class="card"><h3>Analyst decision</h3>
+        <div id="formWrap"><div class="empty">Select a hit from the queue to record a decision.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="t-history" style="display:none">
+    <div class="card"><h3>Analyst review history <span id="hcount" style="font-weight:400;text-transform:none"></span></h3>
+      <table><thead><tr><th>Reviewed at</th><th>Analyst</th><th>Alert / hit</th><th>System said</th><th>Analyst decision</th><th>Reason code</th><th>Note</th></tr></thead><tbody id="hrows"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<aside id="drawer"><button class="x" id="dx">×</button><div id="dbody"></div></aside>
+
+<script>
+// Public by design: project URL + publishable (anon-role) key. Access is limited by RLS (see README – demo-only policies).
+const SUPABASE_URL = "https://uqqrzlonhbipdisgfeca.supabase.co";
+const SUPABASE_KEY = "sb_publishable_DCAf22bnlgRDkBI2W_UP5g_bKzY3Znz";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const CODES = {
+  SAME_ENTITY: ["NAME_DOB_LOCATION_MATCH","NAME_DOB_MATCH","NAME_LOCATION_MATCH"],
+  DIFFERENT_ENTITY: ["TEMPORAL_IMPOSSIBILITY","DECEASED","DOB_MISMATCH","LOCATION_MISMATCH","NAME_MISMATCH_VERIFIED","ENTITY_TYPE_MISMATCH"],
+  REVIEW: ["INSUFFICIENT_DATA","AMBIGUOUS_CUSTOMER_RECORD"]
+};
+const ALL_CODES = [].concat(CODES.DIFFERENT_ENTITY, CODES.SAME_ENTITY, CODES.REVIEW);
+const DEC_LABEL = {SAME_ENTITY:"Confirmed", DIFFERENT_ENTITY:"Cleared", REVIEW:"Review"};
+const PAGE = 50;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = t => t ? new Date(t).toLocaleString("en-GB", {dateStyle:"medium", timeStyle:"medium"}) : "–";
+const pill = d => `<span class="pill ${esc(d)}">${esc(DEC_LABEL[d] || d)}</span>`;
+
+let runs = [], run = null, rows = [], reviews = [], filtered = [], page = 0, qpage = 0, selHit = null;
+
+function showErr(e) { const b = $("err"); b.style.display = e ? "block" : "none"; b.textContent = e ? String(e.message || e) : ""; }
+
+async function fetchAll(table, build) {
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await build(sb.from(table).select("*")).range(from, from + 999);
+    if (error) throw error;
+    out = out.concat(data);
+    if (data.length < 1000) return out;
+    from += 1000;
+  }
+}
+
+async function loadRuns() {
+  let q = sb.from("runs").select("*").order("started_at", { ascending: false });
+  if ($("fromDate").value) q = q.gte("started_at", $("fromDate").value + "T00:00:00");
+  if ($("toDate").value) q = q.lte("started_at", $("toDate").value + "T23:59:59");
+  const { data, error } = await q;
+  if (error) throw error;
+  runs = data;
+  const keep = run && runs.find(r => r.id === run.id) ? run.id : (runs[0] && runs[0].id);
+  $("runSel").innerHTML = runs.length ? runs.map(r =>
+    `<option value="${esc(r.id)}">${esc(fmt(r.started_at))} · ${esc(r.git_commit || "?")} · ${esc(r.data_label || "")}</option>`).join("")
+    : `<option value="">No runs in range</option>`;
+  if (keep) { $("runSel").value = keep; await loadRun(keep); } else { run = null; rows = []; reviews = []; render(); }
+}
+
+async function loadRun(id) {
+  run = runs.find(r => r.id === id);
+  rows = await fetchAll("decisions", q => q.eq("run_id", id).order("hit_id"));
+  reviews = await fetchAll("analyst_reviews", q => {
+    q = q.eq("run_id", id).order("reviewed_at", { ascending: false });
+    if ($("fromDate").value) q = q.gte("reviewed_at", $("fromDate").value + "T00:00:00");
+    if ($("toDate").value) q = q.lte("reviewed_at", $("toDate").value + "T23:59:59");
+    return q;
+  });
+  page = 0; qpage = 0; selHit = null;
+  const codes = [...new Set(rows.map(r => r.reason_code))].sort();
+  $("fCode").innerHTML = `<option value="">All</option>` + codes.map(c => `<option>${esc(c)}</option>`).join("");
+  render();
+}
+
+function reviewedSet() { return new Set(reviews.map(r => r.hit_id)); }
+
+function render() {
+  renderKpis(); applyFilters(); renderQueue(); renderHistory();
+}
+
+function renderKpis() {
+  if (!run) { $("kpis").innerHTML = ""; $("cmp").textContent = ""; return; }
+  const c = run.counts || {}, tot = c.total || rows.length || 0;
+  const rr = tot ? (100 * (c.REVIEW || 0) / tot).toFixed(1) : "0";
+  const k = (cls, l, v, s) => `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+  $("kpis").innerHTML =
+    k("b", "Total hits", tot, "alerts in run: " + new Set(rows.map(r => r.alert_id)).size) +
+    k("g", "Cleared", c.DIFFERENT_ENTITY || 0, "DIFFERENT_ENTITY · " + (tot ? (100 * c.DIFFERENT_ENTITY / tot).toFixed(1) : 0) + "%") +
+    k("r", "Confirmed", c.SAME_ENTITY || 0, "SAME_ENTITY · " + (tot ? (100 * c.SAME_ENTITY / tot).toFixed(1) : 0) + "%") +
+    k("a", "Review", c.REVIEW || 0, "review rate " + rr + "%") +
+    k("b", "Runtime", run.runtime_s != null ? Number(run.runtime_s).toFixed(1) + " s" : "–", "limit 30 min · commit " + esc(run.git_commit || "?")) +
+    k("b", "Analyst reviews", reviews.length, reviewedSet().size + " hits reviewed");
+  const i = runs.findIndex(r => r.id === run.id), prev = runs[i + 1];
+  $("cmp").textContent = prev ? `vs previous run (${fmt(prev.started_at)}, ${prev.git_commit}): review ${prev.counts.REVIEW} → ${c.REVIEW}, cleared ${prev.counts.DIFFERENT_ENTITY} → ${c.DIFFERENT_ENTITY}, confirmed ${prev.counts.SAME_ENTITY} → ${c.SAME_ENTITY}.` : "";
+}
+
+function applyFilters() {
+  const d = $("fDec").value, c = $("fCode").value, q = $("fQ").value.trim().toLowerCase();
+  filtered = rows.filter(r => (!d || r.decision === d) && (!c || r.reason_code === c) &&
+    (!q || [r.alert_id, r.hit_id, r.customer_record_id].some(v => (v || "").toLowerCase().includes(q))));
+  if (page * PAGE >= filtered.length) page = 0;
+  const slice = filtered.slice(page * PAGE, page * PAGE + PAGE);
+  $("hitCount").textContent = `(${filtered.length} of ${rows.length})`;
+  $("rows").innerHTML = slice.length ? slice.map(r => `<tr data-h="${esc(r.hit_id)}"><td class="mono">${esc(r.alert_id)}</td><td class="mono">${esc(r.hit_id)}</td><td>${pill(r.decision)}</td><td class="code">${esc(r.reason_code)}</td><td class="mono">${esc(r.customer_record_id || "–")}</td><td class="trunc">${esc((r.reason || "").slice(0, 150))}${(r.reason || "").length > 150 ? "…" : ""}</td></tr>`).join("")
+    : `<tr><td colspan="6" class="empty">No hits match.</td></tr>`;
+  $("pg").textContent = filtered.length ? `${page * PAGE + 1}–${Math.min(filtered.length, page * PAGE + PAGE)} of ${filtered.length}` : "0";
+  $("prev").disabled = page === 0; $("next").disabled = (page + 1) * PAGE >= filtered.length;
+  renderChart();
+}
+
+function renderChart() {
+  const m = {};
+  filtered.forEach(r => { (m[r.reason_code] = m[r.reason_code] || { SAME_ENTITY: 0, DIFFERENT_ENTITY: 0, REVIEW: 0, n: 0 })[r.decision]++; m[r.reason_code].n++; });
+  const ks = Object.keys(m).sort((a, b) => m[b].n - m[a].n), max = Math.max(1, ...ks.map(k => m[k].n));
+  $("chart").innerHTML = ks.length ? ks.map(k => `<div class="bar"><div class="lab" title="${esc(k)}">${esc(k)}</div><div class="trk">${["DIFFERENT_ENTITY","SAME_ENTITY","REVIEW"].map(d => m[k][d] ? `<div class="seg ${d}" style="width:${100 * m[k][d] / max}%" title="${esc(d)}: ${m[k][d]}"></div>` : "").join("")}</div><div class="num">${m[k].n}</div></div>`).join("") : `<div class="empty">No data</div>`;
+}
+
+function renderQueue() {
+  const done = reviewedSet(), hideDone = $("qOpen").checked;
+  const all = rows.filter(r => r.decision === "REVIEW");
+  const list = hideDone ? all.filter(r => !done.has(r.hit_id)) : all;
+  $("qn").textContent = all.filter(r => !done.has(r.hit_id)).length;
+  $("qcount").textContent = `(${list.length} shown · ${all.length} total REVIEW · ${done.size} reviewed)`;
+  if (qpage * PAGE >= list.length) qpage = 0;
+  const slice = list.slice(qpage * PAGE, qpage * PAGE + PAGE);
+  $("qrows").innerHTML = slice.length ? slice.map(r => `<tr data-q="${esc(r.hit_id)}" style="${selHit === r.hit_id ? "background:#eaf1ff" : ""}"><td class="mono">${esc(r.alert_id)}</td><td class="mono">${esc(r.hit_id)}</td><td class="code">${esc(r.reason_code)}</td><td>${done.has(r.hit_id) ? '<span class="done">reviewed</span>' : ""}</td></tr>`).join("") : `<tr><td colspan="4" class="empty">Nothing in the queue.</td></tr>`;
+  $("qpg").textContent = list.length ? `${qpage * PAGE + 1}–${Math.min(list.length, qpage * PAGE + PAGE)} of ${list.length}` : "0";
+  $("qprev").disabled = qpage === 0; $("qnext").disabled = (qpage + 1) * PAGE >= list.length;
+}
+
+function hitBlock(r) {
+  return `<dl><dt>Alert</dt><dd class="mono">${esc(r.alert_id)}</dd><dt>Hit</dt><dd class="mono">${esc(r.hit_id)}</dd>
+    <dt>System decision</dt><dd>${pill(r.decision)} <span class="code">${esc(r.reason_code)}</span></dd>
+    <dt>Customer record</dt><dd class="mono">${esc(r.customer_record_id || "–")}</dd>
+    <dt>Reason</dt><dd>${esc(r.reason || "–")}</dd>
+    <dt>Evidence ids</dt><dd>${(r.evidence || []).map(e => `<span class="chip mono">${esc(e)}</span>`).join("") || "–"}</dd>
+    <dt>Decided at</dt><dd>${esc(fmt(r.decided_at))}</dd></dl>`;
+}
+
+function reviewForm(r) {
+  const prev = reviews.filter(x => x.hit_id === r.hit_id);
+  return `${hitBlock(r)}
+  ${prev.length ? `<h3 style="font-size:12px;color:var(--mute);text-transform:uppercase">Previous analyst reviews</h3>${prev.map(x => `<div class="chip" style="display:block">${esc(fmt(x.reviewed_at))} · <b>${esc(x.analyst)}</b> → ${pill(x.decision)} ${esc(x.reason_code)}${x.note ? "<br>" + esc(x.note) : ""}</div>`).join("")}` : ""}
+  <form class="form" id="rf" data-h="${esc(r.hit_id)}">
+    <div><label>Analyst name</label><input name="analyst" required maxlength="80" value="${esc(localStorage.getItem("analyst") || "")}"></div>
+    <div><label>Decision</label><select name="decision" id="rfDec"><option value="DIFFERENT_ENTITY">Clear (DIFFERENT_ENTITY)</option><option value="SAME_ENTITY">Confirm (SAME_ENTITY)</option><option value="REVIEW">Keep in REVIEW</option></select></div>
+    <div class="full"><label>Reason code (POLICY.md)</label><select name="reason_code" id="rfCode"></select></div>
+    <div class="full"><label>Note</label><textarea name="note" rows="3" maxlength="2000" placeholder="What did you check? Which records?"></textarea></div>
+    <div class="full"><button class="btn" type="submit">Submit review</button></div>
+  </form><div id="rfMsg"></div>`;
+}
+
+function fillCodes(sel, dec) { sel.innerHTML = CODES[dec].map(c => `<option>${c}</option>`).join(""); }
+
+function bindForm(r) {
+  const dec = $("rfDec"), code = $("rfCode");
+  fillCodes(code, dec.value);
+  dec.onchange = () => fillCodes(code, dec.value);
+  $("rf").onsubmit = async ev => {
+    ev.preventDefault();
+    const f = new FormData(ev.target), btn = ev.target.querySelector("button");
+    btn.disabled = true; $("rfMsg").innerHTML = "";
+    const row = { run_id: run.id, hit_id: r.hit_id, analyst: f.get("analyst").trim(), decision: f.get("decision"), reason_code: f.get("reason_code"), note: (f.get("note") || "").trim() || null };
+    const { error } = await sb.from("analyst_reviews").insert(row);
+    if (error) { $("rfMsg").innerHTML = `<div class="msg err">${esc(error.message)}</div>`; btn.disabled = false; return; }
+    localStorage.setItem("analyst", row.analyst);
+    reviews = await fetchAll("analyst_reviews", q => q.eq("run_id", run.id).order("reviewed_at", { ascending: false }));
+    render();
+    $("formWrap").innerHTML = reviewForm(r); bindForm(r);
+    $("rfMsg").innerHTML = `<div class="msg ok">Saved ${esc(fmt(new Date()))}.</div>`;
+  };
+}
+
+function selectForReview(hit) {
+  selHit = hit; const r = rows.find(x => x.hit_id === hit); if (!r) return;
+  $("formWrap").innerHTML = reviewForm(r); bindForm(r); renderQueue();
+}
+
+function renderHistory() {
+  const by = Object.fromEntries(rows.map(r => [r.hit_id, r]));
+  $("hcount").textContent = `(${reviews.length})`;
+  $("hrows").innerHTML = reviews.length ? reviews.map(x => { const r = by[x.hit_id] || {};
+    return `<tr><td>${esc(fmt(x.reviewed_at))}</td><td>${esc(x.analyst)}</td><td class="mono">${esc(r.alert_id || "")}<br>${esc(x.hit_id)}</td><td>${r.decision ? pill(r.decision) + '<br><span class="code">' + esc(r.reason_code) + "</span>" : ""}</td><td>${pill(x.decision)}</td><td class="code">${esc(x.reason_code)}</td><td>${esc(x.note || "")}</td></tr>`; }).join("")
+    : `<tr><td colspan="7" class="empty">No analyst reviews yet for this run.</td></tr>`;
+}
+
+function openDrawer(hit) {
+  const r = rows.find(x => x.hit_id === hit); if (!r) return;
+  const prev = reviews.filter(x => x.hit_id === hit);
+  $("dbody").innerHTML = `<h2>Hit ${esc(hit)}</h2>${hitBlock(r)}${prev.length ? `<div class="note">${prev.length} analyst review(s) recorded.</div>` : ""}<button class="btn" id="dgo">Review this hit</button>`;
+  $("drawer").classList.add("open");
+  $("dgo").onclick = () => { $("drawer").classList.remove("open"); setTab("queue"); $("qOpen").checked = false; renderQueue(); selectForReview(hit); };
+}
+
+function setTab(t) {
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  ["hits", "queue", "history"].forEach(x => $("t-" + x).style.display = x === t ? "" : "none");
+}
+
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.dataset.t));
+["fDec", "fCode", "fQ"].forEach(i => $(i).addEventListener("input", () => { page = 0; applyFilters(); }));
+$("prev").onclick = () => { page--; applyFilters(); }; $("next").onclick = () => { page++; applyFilters(); };
+$("qprev").onclick = () => { qpage--; renderQueue(); }; $("qnext").onclick = () => { qpage++; renderQueue(); };
+$("qOpen").onchange = () => { qpage = 0; renderQueue(); };
+$("rows").onclick = e => { const tr = e.target.closest("tr[data-h]"); if (tr) openDrawer(tr.dataset.h); };
+$("qrows").onclick = e => { const tr = e.target.closest("tr[data-q]"); if (tr) selectForReview(tr.dataset.q); };
+$("dx").onclick = () => $("drawer").classList.remove("open");
+$("runSel").onchange = () => loadRun($("runSel").value).catch(showErr);
+["fromDate", "toDate"].forEach(i => $(i).onchange = () => loadRuns().catch(showErr));
+loadRuns().catch(showErr);
+</script>
+</body>
+</html>
