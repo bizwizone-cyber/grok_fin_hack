@@ -491,6 +491,18 @@ def parse_date(val):
         if b > 12:
             return PDate(y, a, b)
         return PDate(y, b, a)  # DMY
+    # DD.MM.YYYY and DD-MM-YYYY (same day-first rule)
+    m = re.fullmatch(r"(\d{1,2})[.-](\d{1,2})[.-](\d{4})", text)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return PDate(y, a, b) if b > 12 else PDate(y, b, a)
+    # YYYY/MM/DD
+    m = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})", text)
+    if m:
+        return PDate(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    # Ordinals: "15th of July 1968", "November 30th, 1985"
+    text = re.sub(r"\b(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text)
+    text = re.sub(r"\b(\d{1,2}) of\s+", r"\1 ", text)
     # Month-name forms
     m = re.fullmatch(
         r"(?:(\d{1,2})\s+)?([A-Za-z]{3,9})\.?(?:\s+(\d{1,2}))?,?\s+(\d{4})",
@@ -933,15 +945,24 @@ KYC_FAIL_RE = re.compile(
     r"resubmi(?:t|ssion|tted)|re-submi(?:t|ssion|tted)|(?:requires?|needs?|sent for|referred for|"
     r"escalated (?:for|to)|flagged for) (?:\w+ ){0,2}review|under review|flagged|escalated|"
     # unusable document
-    r"unreadable|illegible|blurr(?:y|ed)|"
+    r"unreadable|illegible|blurr(?:y|ed)|bounced?|"
+    # provider outcomes that are not a pass, and customers who never finished
+    r"refer|red[- ]flag(?:ged|s)?|dropped out|drop-?off|try again|retry|"
+    r"new document (?:requested|required)|not established|"
     # suspected forgery
-    r"suspected fraud|fraudulent|forged|forgery|tampered|counterfeit|altered document"
+    r"suspected fraud|fraudulent|forged|forgery|tampered|counterfeit|altered document|manipulat\w*"
     r")\b",
     re.I,
 )
+# A missed place lived makes the customer's countries look narrower, which can
+# wrongly clear on LOCATION_MISMATCH, so this list errs wide: an extra country
+# can only block a location clearance.
 LIVED_RE = re.compile(
-    r"\b(?:liv(?:ed|ing)|residenc(?:y|e)|resid(?:ed|ing)|worked|working|"
-    r"employ(?:ed|ment)|based in|household|home and|job in)\b",
+    r"\b(?:liv(?:ed|ing|es)|residen(?:cy|ce|t|ts|tial)|resid(?:ed|ing|es)|worked|working|"
+    r"employ(?:ed|ment)|based in|household|home|job in|address(?:es)?|relocat\w*|moved|"
+    r"grew up|studied|abroad|tax residen\w*|stayed|settled|emigrated|immigrated|"
+    # found by the Grok red team, approved by hand
+    r"places the customer in|posting|posted|stationed|work history|career|time in)\b",
     re.I,
 )
 
@@ -976,7 +997,8 @@ DOC_COUNTRY_RE = re.compile(
 
 _MON='(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'
 ANY_DATE_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|" + _MON + r"\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+" + _MON + r"\.?,?\s+\d{4}", re.I)
+    r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|\d{4}/\d{1,2}/\d{1,2}|\d{1,2}[.-]\d{1,2}[.-]\d{4}|"
+    + _MON + r"\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?(?:\s+of)?\s+" + _MON + r"\.?,?\s+\d{4}", re.I)
 BIRTH_KW_RE = re.compile(r"\b(?:DOB|D\.O\.B\.?|date of birth|birth date|birthdate|birthday|born|birth)\b", re.I)
 
 def dob_from_note_text(text):
@@ -1015,16 +1037,29 @@ def parse_kyc_note(note):
         return None
     if (note.get("channel") or "").lower() != "kyc" and not KYC_SUCCESS_RE.search(text):
         return None
+    # The check date. A birth date equal to it, or within 10 years of it, is the
+    # check date misread (e.g. when the real birth date is in a format we cannot
+    # parse, or the check date is the date in brackets). A wrong verified DOB can
+    # clear on DOB_MISMATCH, so such a reading is skipped and the next reader tried.
+    chk = parse_date(note.get("created_at"))
+    cm = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    if cm:
+        chk = parse_date(cm.group(1)) or chk
+
+    def plausible(d):
+        return bool(d) and not (chk and (d == chk or d.year > chk.year - 10))
+
     dob = None
     m = DOB_LABEL_RE.search(text)
     if m:
         dob = parse_date(m.group(1))
-    if not dob:
+    if not plausible(dob):
         m = PAREN_DOB_RE.search(text)
-        if m:
-            dob = parse_date(m.group(1))
-    if not dob:
+        dob = parse_date(m.group(1)) if m else None
+    if not plausible(dob):
         dob = dob_from_note_text(text)
+    if not plausible(dob):
+        dob = None
     name = None
     # Prefer a caps name near DOB / verification words
     caps = list(CAPS_NAME_RE.finditer(text))
@@ -1032,6 +1067,7 @@ def parse_kyc_note(note):
         "DOB", "ID", "THE", "FOR", "AND", "FROM", "USING", "WITH", "DATE", "BIRTH",
         "NATIONAL", "PASSPORT", "DRIVING", "LICENCE", "LICENSE", "DOCUMENT",
         "PERSONA", "SUMSUB", "ONFIDO", "VERIFF", "UNITED", "STATES", "KINGDOM",
+        "KYC", "KYB", "AML", "CDD", "EDD", "OK", "ALL", "CLEAR", "PASS", "PASSED", "NOTE",
     }
     for m in caps:
         cand = m.group(1).strip(" ,")
@@ -1520,6 +1556,7 @@ def build_person(records, bank, screened=None):
         "countries": countries,
         "unrecognised_countries": unrecognised,
         "lived_note_ids": [n for n in lived_ids if n],
+        "lived_pairs": [(c, n) for c, n in lived if n],
         "entity_type": etype,
         "incorporation": incorp,
     }
@@ -1614,7 +1651,11 @@ def extract_age_years(text):
         re.compile(r"\breached the age of\s+(\d{1,3})\b", re.I),
         re.compile(r"\ba\s+(\d{1,3})-year-old\b", re.I),
         re.compile(r"\b(\d{1,3})\s*-?\s*year(?:s)?[\s-]?old\b", re.I),
-        re.compile(r"\b(?:he|she|they|who)\s+was\s+(\d{1,3})\b", re.I),
+        re.compile(r"\b(?:he|she|they|who|the subject)\s+was\s+(\d{1,3})\b", re.I),
+        # Wordings found by the Grok red team (tools/grok_redteam.py), approved by hand
+        re.compile(r"\bwas\s+(\d{1,3})\s+when\b", re.I),
+        re.compile(r"\b(\d{1,3})\s+years\s+of\s+age\b", re.I),
+        re.compile(r"\bage(?:d)?\s+(?:given|listed|stated|recorded|reported)\s+as\s+(\d{1,3})\b", re.I),
         re.compile(r",\s+(\d{1,3}),\s+"),
     ]
     date_re = re.compile(
@@ -1745,10 +1786,15 @@ def death_date(hit):
     if d:
         return d
     notes = hit.get("profile_notes") or ""
+    # Only wordings that say the listed person is dead ("killed" is left out: it
+    # is as often something the person did). The date must follow within a few
+    # words, in the same sentence.
     m = re.search(
-        r"(?:died|deceased|date of death|passed away)\s+(?:on\s+|in\s+)?"
-        r"(\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|"
-        r"September|October|November|December)\s+\d{1,2},\s+\d{4}|\d{4})",
+        r"(?:\bdied|\bdeceased|\bdate of death|\bpassed away|\bfound dead|\breported dead|"
+        r"\bDOD\b|\bdeath date|\bconfirmed death of|"
+        r"\bdeath (?:was )?(?:confirmed|reported|registered|recorded)|\bdeath (?=on|in)|\(d\.)"
+        r"[^.;\d]{0,25}?"
+        r"(" + ANY_DATE_RE.pattern + r"|\d{4}-\d{2}|\b(?:19|20)\d{2}\b)",
         notes,
         re.I,
     )
@@ -2088,10 +2134,40 @@ def decide_one(person, hitf, alert, bank):
     for s in hitf.get("search_used") or []:
         ev.append(s.get("result_id"))
 
-    def pack(decision, key, detail):
+    # Principle 9: cite what decided the hit, not everything looked at. These
+    # helpers name the records behind one fact; pack() falls back to the full
+    # list when a narrower one would be empty.
+    ident_id = None
+    if ident:
+        ident_id = (ident.get("check_id") if ident.get("source") == "kyc" else None) or ident.get("note_id")
+    sr_ids = [s.get("result_id") for s in hitf.get("search_used") or []]
+
+    def dob_sources():
+        if ident_id and ident.get("verified_dob") and person.get("dob") == ident["verified_dob"]:
+            return [ident_id]
+        return [c["record_id"] for c in person.get("records") or []
+                if person.get("dob") and parse_date(c.get("dob")) == person.get("dob")]
+
+    def country_sources(countries):
+        want = set(countries)
+        out = [c["record_id"] for c in person.get("records") or []
+               if want & set(customer_declared_countries(c))]
+        if ident_id and ident.get("document_country") in want:
+            out.append(ident_id)
+        out += [nid for ctry, nid in person.get("lived_pairs") or [] if ctry in want]
+        return out
+
+    shared = sorted(set(person.get("countries") or []) & set(hitf.get("countries") or []))
+    # When the hit would also clear on location, the records behind that ground
+    # decided it too, so they are cited alongside a DOB or name contradiction.
+    also_location = location_mismatch(person, hitf) and not (
+        person.get("unrecognised_countries") or hitf.get("unrecognised_countries"))
+    location_cite = country_sources(person.get("countries") or []) if also_location else []
+
+    def pack(decision, key, detail, cite=None):
         # unique evidence, stable
         seen, out = set(), []
-        for x in ev:
+        for x in (cite if cite and any(cite) else ev):
             if x and x not in seen:
                 seen.add(x)
                 out.append(x)
@@ -2140,6 +2216,7 @@ def decide_one(person, hitf, alert, bank):
             "DIFFERENT_ENTITY",
             "DOB_MISMATCH",
             f"The customer's date of birth is {ciso} but the hit's date of birth is {hiso}.",
+            cite=location_cite + dob_sources() + sr_ids,
         )
 
     # Verified name
@@ -2153,6 +2230,7 @@ def decide_one(person, hitf, alert, bank):
             "DIFFERENT_ENTITY",
             "NAME_MISMATCH_VERIFIED",
             f"The customer's verified name is {person.get('verified_name')}{src}, which does not match the hit's name {hitn}.",
+            cite=location_cite + [ident_id],
         )
 
     n_ok = name_agrees(person, hitf, bank, use_verified=True)
@@ -2210,6 +2288,7 @@ def decide_one(person, hitf, alert, bank):
                 "SAME_ENTITY",
                 key,
                 f"The customer's date of birth {ciso} agrees with the hit's {hiso}.{extra} The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
+                cite=dob_sources() + (country_sources(shared) if l_ok else []) + sr_ids,
             )
 
     # Name+DOB agree but countries all differ -> REVIEW (already excluded SAME and LOCATION)
@@ -2234,7 +2313,8 @@ def decide_one(person, hitf, alert, bank):
             f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. "
             + detail
         )
-    return pack("REVIEW", "INSUFFICIENT_DATA", detail)
+    return pack("REVIEW", "INSUFFICIENT_DATA", detail,
+                cite=(country_sources(shared) + sr_ids) if l_ok else None)
 
 
 def compose_reason(person, hitf, result, ambiguous, same_decision, bank):

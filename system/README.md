@@ -60,7 +60,12 @@ Name parts are compared as in principle 8: case, accents, punctuation and bracke
 
 ## Evidence
 
-`evidence` lists only the record IDs that decided the hit, as they appear in the files: the customer record or records, the approved check (`KYC-…`) or onboarding note (`NOTE-…`) that supplied the verified facts, a lived-in note when location used it, and a search result (`SR-…`) only when it supplied a date of birth. The reason is two to four sentences that name this hit's own facts and, on `REVIEW`, what is missing.
+`evidence` lists only the record IDs that decided the hit, as they appear in the files. Each ground cites the records behind its own fact:
+- **`DOB_MISMATCH`, `NAME_MISMATCH_VERIFIED`:** the approved check (`KYC-…`) or onboarding note (`NOTE-…`) that gave the verified date of birth or name (or the customer record, for a declared date of birth), plus the search result (`SR-…`) that gave the hit's date of birth. If location would also clear the hit, its records are added.
+- **`LOCATION_MISMATCH`:** every record that ties the customer to a country: customer records, the approved document, and lived-in notes.
+- **Matches, and reviews where both sides share a country:** the source of the date of birth and only the records that tie the customer to the *shared* country.
+
+On the 50 practice labels the evidence equals the reference evidence exactly on all 50 hits. The reason is two to four sentences that name this hit's own facts and, on `REVIEW`, what is missing.
 
 ## Determinism and models
 
@@ -69,6 +74,23 @@ Name parts are compared as in principle 8: case, accents, punctuation and bracke
 - There is no randomness and no clock. The only dates used are those in the data (for example `alerts.screened_at`).
 - No language model and no OpenRouter call. There is no API cost, and a second run is byte-identical to the first (confirmed on the development set).
 - The local comparison levels and fixed weights replace a dependency on Splink: there is no training pass, random seed, or external data. They can only keep an uncertain hit in `REVIEW`; they cannot turn it into `DIFFERENT_ENTITY`.
+
+## Grok red team: hardening the readers against new wording
+
+The unseen set words its free text differently, and every fact the system uses from free text comes through a handful of readers: KYC-team notes (passed or failed, name, date of birth), ages and deaths in hit profiles, and places a customer lived. `tools/grok_redteam.py` attacks exactly those readers. It is a development tool, not part of `system/run`, so the scored system still calls no model.
+
+1. Grok (`x-ai/grok-4.7` through OpenRouter) writes new wordings of each kind of sentence, the way another vendor or analyst might, with placeholders instead of facts. Only invented people are used; no development data is sent.
+2. Each wording is filled with invented people and ten date formats and run through the real reader functions in `system/run`.
+3. Each reading is `ok`, `missed` (costs a review) or `WRONG` (a wrong fact, which can cause an unsafe clearance). WRONG readings are fixed first.
+4. With `--suggest`, Grok proposes the vocabulary to add for each miss, quoting the words it relied on. A person approves each one before it goes into `system/run`; nothing is applied automatically, and nothing that would make a failed check read as passed is accepted.
+
+The first round, run on 180 hand-written wordings (`tools/grok_redteam.py` without `--live`), found **27 WRONG readings**: failed checks read as passed ("bounced", "marked as 'refer'", "dropped out", "red flag"), the check date read as the birth date when the birth date was written `30.11.1985`, `1992/02/19` or `15th of July 1968`, and "KYC OK" read as the customer's name. It also found lived-in notes the system missed ("resident", "residential", "previous address", "relocated"). After the fixes there are **0 WRONG readings**. On the development set this changed one decision, `H-80FEC3`: the customer's note says "residential tenure in Pakistan … 2014 until 2022", so the Pakistani hit was wrongly cleared on location before and is now `REVIEW`.
+
+The second round was live: Grok (`x-ai/grok-4.7`) wrote 60 new wordings, filled into 216 test sentences. Every passed and failed KYC note was read correctly and there were **0 WRONG readings**, but Grok found misses: places lived ("work history places the customer in…", "a posting in…", "time in … ran from"), ages ("was 47 when convicted", "47 years of age", "age given as 47") and deaths ("DOD", "Confirmed death of …"). Grok then proposed 40 vocabulary additions with the words it relied on. We accepted the ones that cannot cause a wrong clearance and rejected two that can: "death of" (a profile may say the person was involved in *someone else's* death) and "expired on" (documents expire too). After that round, places lived are read 48/48 and ages 33/36. Those wordings were already in the development set: four profiles say, for example, "Christian Zaum was 32 when arrested during September 2001", which the system could not read before. Two of those hits are now cleared on `DOB_MISMATCH` (customer born 1995), one is confirmed (`H-2EBD19`, born 1955 against 1955 or 1956), and one gains a stronger ground.
+
+The red team reruns without cost: `--cached` re-tests the last Grok wordings after every code change.
+
+In production the same loop would run on every batch of analyst-reviewed alerts: the wordings that reached a person become the next round's test sentences, and the approved vocabulary grows with each round.
 
 ## Three example cases
 

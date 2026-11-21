@@ -20,3 +20,6 @@ __pycache__/
 .venv/
 venv/
 fixture/
+
+# Red-team output (local only)
+redteam_out/
