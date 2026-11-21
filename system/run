@@ -907,8 +907,9 @@ LIVED_RE = re.compile(
 )
 
 # ALL-CAPS name of 2+ tokens
+_UC = r"[^\W\da-z_]"
 CAPS_NAME_RE = re.compile(
-    r"\b([A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ]{2,}(?:(?:\s+|\s*,\s*)[A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ][A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ'.-]*){1,5})\b"
+    r"(?<![\w])((?:" + _UC + r"{2,}|0{3,}|N/A)(?:(?:\s+|\s*,\s*)(?:" + _UC + r"|0{3,}|N/A)(?:" + _UC + r"|['./-])*){1,5})(?![\w])"
 )
 DOB_LABEL_RE = re.compile(
     r"(?:DOB|date of birth|birth date|born)\s*(?:on document\s*)?(?:is\s*|of\s*|:?\s*)"
@@ -933,6 +934,38 @@ DOC_COUNTRY_RE = re.compile(
 )
 
 
+
+_MON='(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'
+ANY_DATE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|" + _MON + r"\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+" + _MON + r"\.?,?\s+\d{4}", re.I)
+BIRTH_KW_RE = re.compile(r"\b(?:DOB|D\.O\.B\.?|date of birth|birth date|birthdate|birthday|born|birth)\b", re.I)
+
+def dob_from_note_text(text):
+    """Birth date = the date closest (in characters) to a birth keyword."""
+    dates = [(m.start(), m.end(), m.group(0)) for m in ANY_DATE_RE.finditer(text)
+             if not re.search(r"(?<!born )(?<!born)\bon\s+$", text[max(0, m.start() - 8):m.start()], re.I)
+             or re.search(r"\b(?:DOB|birth)\b\s*(?:\w+\s+){0,2}on\s+$", text[max(0, m.start() - 30):m.start()], re.I)]
+    kws = [(m.start(), m.end()) for m in BIRTH_KW_RE.finditer(text)]
+    best = None
+    for ds, de, raw in dates:
+        for ks, ke in kws:
+            gap = ks - de if ks >= de else (ds - ke if ds >= ke else 0)
+            if gap <= 40 and (best is None or gap < best[0]):
+                best = (gap, raw)
+    if best:
+        return parse_date(best[1])
+    # no keyword: the one date not introduced by "on" (that is the check date)
+    free = [raw for ds, de, raw in dates]
+    if len(free) == 1:
+        return parse_date(free[0])
+    ym = re.search(r"(?:DOB|date of birth|birth date|born)(?:\s+(?:is|of|as|in|on))?\s*:?\s*((?:19|20)\d{2})\b(?![-/])", text, re.I)
+    if ym:
+        return parse_date(ym.group(1))
+    pm = re.findall(r"\(\s*(" + ANY_DATE_RE.pattern + r")\s*\)", text, re.I)
+    if len(pm) == 1:
+        return parse_date(pm[0] if isinstance(pm[0], str) else pm[0][0])
+    return None
+
 def parse_kyc_note(note):
     """Return dict or None for an approved identity check written only in a note."""
     text = note.get("text") or ""
@@ -951,6 +984,8 @@ def parse_kyc_note(note):
         m = PAREN_DOB_RE.search(text)
         if m:
             dob = parse_date(m.group(1))
+    if not dob:
+        dob = dob_from_note_text(text)
     name = None
     # Prefer a caps name near DOB / verification words
     caps = list(CAPS_NAME_RE.finditer(text))
@@ -1577,6 +1612,12 @@ def extract_age_years(text):
                 has_month = bool(d.month)
                 cands.append((0 if has_month else 1, dist, d, dm.group(0)))
             if not cands:
+                for ym in re.finditer(r"\b((?:19|20)\d{2})\b", window):
+                    d = parse_date(ym.group(1))
+                    if d:
+                        pos = lo + ym.start()
+                        cands.append((1, min(abs(pos - am.start()), abs(pos - am.end())), d, ym.group(0)))
+            if not cands:
                 continue
             cands.sort()
             _rank, _dist, d, dstr = cands[0]
@@ -1706,6 +1747,23 @@ def search_rows_for_hit(hit, bank):
                 q2 = re.sub(r"\s+", " ", q2).strip()
                 add_list(bank.search_by_query.get(q2, []))
                 add_list(bank.search_by_sorted.get(" ".join(sorted(q2.split())), []))
+    # queries drop initials and middle names: also accept rows whose query tokens
+    # (>= 2) are a subset of this hit name's non-initial tokens
+    idx = getattr(bank, "_search_by_tokset", None)
+    if idx is None:
+        idx = defaultdict(list)
+        for q, lst in bank.search_by_query.items():
+            idx[frozenset(q.split())].extend(lst)
+        bank._search_by_tokset = idx
+    from itertools import combinations
+    for name in names:
+        q = re.sub(r"[^\w\s]", " ", strip_accents(name).lower())
+        toks = sorted({t for t in q.split() if len(t) > 1})
+        if len(toks) > 6:
+            continue
+        for k in range(2, len(toks) + 1):
+            for comb in combinations(toks, k):
+                add_list(idx.get(frozenset(comb), []))
     rows.sort(key=lambda s: s.get("result_id") or "")
     return rows
 
