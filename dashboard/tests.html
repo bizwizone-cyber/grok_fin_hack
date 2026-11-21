@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sanctions Screening – Test Results</title>
+<link rel="icon" href="data:,">
+<style>
+  :root{--bg:#f3f5f8;--card:#fff;--ink:#17202e;--mute:#667085;--line:#e3e8ef;--navy:#0b2545;--blue:#1d5fd1;
+        --green:#14804a;--greenbg:#e3f5ea;--red:#b42318;--redbg:#fde8e6;--amb:#a15c07;--ambbg:#fff1d6;}
+  *{box-sizing:border-box} body{margin:0;font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:var(--navy);color:#fff;padding:14px 24px;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.2px} header small{color:#9db4d6;display:block;font-weight:400;font-size:12px}
+  header .grow{flex:1} header label{font-size:11px;color:#9db4d6;display:block;text-transform:uppercase;letter-spacing:.6px}
+  header select{background:#143564;color:#fff;border:1px solid #2c4d80;border-radius:6px;padding:6px 8px;font:inherit;min-width:260px}
+  header a{color:#9db4d6;font-size:12px}
+  main{max-width:1280px;margin:0 auto;padding:20px 24px 60px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;border-top:3px solid var(--line)}
+  .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute)} .kpi .v{font-size:26px;font-weight:650;margin-top:2px}
+  .kpi .s{font-size:12px;color:var(--mute)} .kpi.g{border-top-color:var(--green)} .kpi.r{border-top-color:var(--red)} .kpi.a{border-top-color:#e0a100} .kpi.b{border-top-color:var(--blue)}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 14px;flex-wrap:wrap}
+  .tab{padding:9px 16px;cursor:pointer;border:0;background:none;font:inherit;color:var(--mute);border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab.on{color:var(--navy);border-bottom-color:var(--blue);font-weight:600} .tab .n{background:var(--ambbg);color:var(--amb);border-radius:10px;padding:0 7px;font-size:11px;margin-left:5px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px;overflow-x:auto}
+  .card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute);font-weight:600}
+  table{width:100%;border-collapse:collapse} th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--mute);text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px;border-bottom:1px solid #eef1f5;vertical-align:top} td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  td.best{font-weight:650;color:var(--green)} td.worst{font-weight:650;color:var(--red)}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+  .pill{display:inline-block;border-radius:10px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+  .SAME_ENTITY{background:var(--redbg);color:var(--red)} .DIFFERENT_ENTITY{background:var(--greenbg);color:var(--green)} .REVIEW{background:var(--ambbg);color:var(--amb)}
+  .pill.ok{background:var(--greenbg);color:var(--green)} .pill.bad{background:var(--redbg);color:var(--red)} .pill.mid{background:var(--ambbg);color:var(--amb)}
+  .code{color:var(--mute);font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .bar{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12.5px} .bar .lab{width:150px;text-align:right;color:#344054;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .trk{flex:1;background:#f0f3f8;border-radius:4px;height:18px;overflow:hidden;display:flex} .bar .seg{height:100%} .bar .num{width:84px;color:var(--mute);font-size:12px}
+  .seg.ok{background:#3aa876} .seg.missed{background:#e8b73b} .seg.WRONG{background:#e5655b}
+  .legend{display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:6px;flex-wrap:wrap} .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+  .chip{display:inline-block;background:#eef3fb;border:1px solid #d5e0f2;border-radius:5px;padding:1px 7px;margin:0 4px 4px 0}
+  .note{font-size:12.5px;color:var(--mute);margin-top:8px} .note b{color:var(--ink)}
+  .vdesc{color:#344054;margin:-6px 0 14px;font-size:13px}
+  p.lead{margin:0 0 10px;color:#344054}
+  ul.plain{margin:6px 0 0 18px;padding:0;color:#344054} ul.plain li{margin:3px 0}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Sanctions Screening – Test Results<small>Grok Bot London Financial Crime Hackathon · Track 2 · every test, every version of <span class="mono">system/run</span></small></h1></div>
+  <div class="grow"></div>
+  <div><label>Version</label><select id="ver"></select></div>
+  <div><label>Built</label><span id="built" class="mono" style="font-size:12px"></span><br><a href="index.html">Review dashboard →</a></div>
+</header>
+<main>
+  <p class="vdesc" id="vdesc"></p>
+  <div class="kpis" id="kpis"></div>
+  <div class="tabs">
+    <button class="tab on" data-t="compare">Compare versions</button>
+    <button class="tab" data-t="redteam">Grok red team</button>
+    <button class="tab" data-t="synthetic">Synthetic benchmark</button>
+    <button class="tab" data-t="diffs">Dev changes <span class="n" id="dn">0</span></button>
+    <button class="tab" data-t="about">About the tests</button>
+  </div>
+
+  <section id="t-compare">
+    <div class="card"><h3>All versions side by side</h3><div id="cmp"></div>
+      <div class="note">Green marks the best value in a row, red the worst. Unsafe clearances (a real match or a review case cleared) cost 60 points each in scoring; every other mistake costs 2 or 3.</div></div>
+  </section>
+
+  <section id="t-redteam" hidden>
+    <div class="card"><h3>What the red team does</h3>
+      <p class="lead">Grok (<span class="mono">x-ai/grok-4.7</span> via OpenRouter) writes new wordings of the sentences the system reads from free text — KYC-team notes, ages and deaths in hit profiles, places a customer lived — using invented people only. Each wording runs through the real reader functions of the selected version. A <b>WRONG</b> reading is a wrong fact (it can clear a real match); <b>missed</b> means no fact (it costs a review). <span class="mono">system/run</span> itself calls no model.</p>
+      <div class="legend"><span><i style="background:#3aa876"></i>ok</span><span><i style="background:#e8b73b"></i>missed (costs a review)</span><span><i style="background:#e5655b"></i>WRONG (possible unsafe clearance)</span></div>
+    </div>
+    <div class="grid2" id="rt"></div>
+    <div class="card"><h3>WRONG readings by version</h3><div id="rtcmp"></div></div>
+  </section>
+
+  <section id="t-synthetic" hidden>
+    <div class="card"><h3>10,000 generated hits with answers, by scenario</h3><div id="syn"></div>
+      <div class="note" id="synnote"></div></div>
+  </section>
+
+  <section id="t-diffs" hidden>
+    <div class="card"><h3>Dev hits where the Grok version decides differently from the non-Grok one</h3><div id="diffs"></div>
+      <div class="note">Two causes. <b>Free text the red team taught the system to read</b> (H-80FEC3: a "residential tenure in Pakistan" note; H-2EBD19, H-52BE0D, H-683987: "was 32 when arrested…" ages). <b>Company incorporation dates</b>: main ignores the registry check's incorporation date, so companies incorporated after the earliest report (e.g. H-A3B158, TD Bank, N.A., 2008, against a 2007 report) are confirmed there and cleared here on <span class="mono">TEMPORAL_IMPOSSIBILITY</span>, as POLICY.md principle 6 says; the rest keep the same decision with a different reason code. The changed decisions were checked by hand against the source records. These are our output rows, already published in <span class="mono">output/dev.jsonl</span>.</div></div>
+  </section>
+
+  <section id="t-about" hidden>
+    <div class="card"><h3>The tests</h3>
+      <ul class="plain">
+        <li><b>Practice labels (50 hits).</b> The answered dev hits. Scored exactly like the official <span class="mono">validate.py --score</span>: decision score, unsafe clearances, reason codes, customer records, plus whether the evidence equals the reference evidence.</li>
+        <li><b>Full dev run (819 hits).</b> Decision mix, run time, and two runs compared byte for byte (10% of the score is the same answers across five runs).</li>
+        <li><b>Grok red team.</b> <span class="mono">tools/grok_redteam.py</span>: new wordings from Grok and a hand-written set, graded ok / missed / WRONG. Suggestions Grok makes are approved by a person before they reach <span class="mono">system/run</span>.</li>
+        <li><b>Synthetic benchmark (10,000 hits).</b> Ten scenarios of 1,000 hits from <span class="mono">generate_synthetic_bench.py</span>. Its answers are our team's reading of the SOP, not the organisers'; its evidence uses a different convention, so evidence is not compared there.</li>
+      </ul>
+      <div class="note">Rebuild after any change: <span class="mono">tools/build_test_dashboard.py</span> (takes about two minutes; needs the dev data locally).</div>
+    </div>
+  </section>
+</main>
+
+<script id="results" type="application/json">{"generated": "2026-11-21 16:20", "versions": ["baseline", "nongrok", "grok"], "results": {"baseline": {"label": "Before hardening", "ref": "43fb0f1", "commit": "43fb0f1", "blurb": "Rules engine as it stood at 15:00, before the red team and before main's hardening.", "dev": {"seconds": 15.4, "deterministic": true, "decisions": {"DIFFERENT_ENTITY": 453, "REVIEW": 251, "SAME_ENTITY": 115}}, "practice": {"n": 50, "right": 50, "unsafe": 0, "cost": 0, "allreview_cost": 108, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 33}, "redteam": {"Hand-written": {"kyc_pass": {"ok": 19, "missed": 13, "WRONG": 8}, "kyc_fail": {"ok": 24, "missed": 0, "WRONG": 16}, "age": {"ok": 18, "missed": 12, "WRONG": 0}, "death": {"ok": 2, "missed": 28, "WRONG": 0}, "lived": {"ok": 16, "missed": 24, "WRONG": 0}}, "Grok": {"kyc_pass": {"ok": 25, "missed": 3, "WRONG": 20}, "kyc_fail": {"ok": 48, "missed": 0, "WRONG": 0}, "age": {"ok": 21, "missed": 15, "WRONG": 0}, "death": {"ok": 3, "missed": 33, "WRONG": 0}, "lived": {"ok": 28, "missed": 20, "WRONG": 0}}}, "synthetic": {"seconds": 5.3, "overall": {"n": 10000, "right": 10000, "unsafe": 0, "cost": 0, "allreview_cost": 15000, "decision_score": 100.0, "code_pct": 90.0, "customer_pct": 90.0, "evidence_exact": 1000}, "scenarios": {"0": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Birth year in free-text profile", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "1": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Year-only birth date on the hit", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "2": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Name + DOB agree, country conflicts", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "3": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 1000, "name": "Rejected old check, newer approved", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "4": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 0.0, "customer_pct": 0.0, "evidence_exact": 0, "name": "Namesake 'Jr' record, shared phone", "expected": "REVIEW", "expected_code": "AMBIGUOUS_CUSTOMER_RECORD", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "5": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Second record, same phone + DOB", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "6": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Reordered, accented name", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "7": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Company with a legal form", "expected": "SAME_ENTITY", "expected_code": "NAME_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_LOCATION_MATCH"}, "8": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "No DOB and no country", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "9": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 3000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "DOB contradicts by 12 years", "expected": "DIFFERENT_ENTITY", "expected_code": "DOB_MISMATCH", "got": "DIFFERENT_ENTITY", "got_code": "DOB_MISMATCH"}}}}, "nongrok": {"label": "Non-Grok (main)", "ref": "f4ebeb5", "commit": "f4ebeb5", "blurb": "Main without the red team: hand hardening (date formats, crash-safe fallback, stricter death rules, trimmed evidence) and Amin's company/namesake safety rules.", "dev": {"seconds": 17.4, "deterministic": true, "decisions": {"DIFFERENT_ENTITY": 450, "REVIEW": 251, "SAME_ENTITY": 118}}, "practice": {"n": 50, "right": 50, "unsafe": 0, "cost": 0, "allreview_cost": 108, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 46}, "redteam": {"Hand-written": {"kyc_pass": {"ok": 33, "missed": 3, "WRONG": 4}, "kyc_fail": {"ok": 24, "missed": 0, "WRONG": 16}, "age": {"ok": 21, "missed": 9, "WRONG": 0}, "death": {"ok": 9, "missed": 21, "WRONG": 0}, "lived": {"ok": 24, "missed": 16, "WRONG": 0}}, "Grok": {"kyc_pass": {"ok": 43, "missed": 5, "WRONG": 0}, "kyc_fail": {"ok": 48, "missed": 0, "WRONG": 0}, "age": {"ok": 24, "missed": 12, "WRONG": 0}, "death": {"ok": 12, "missed": 24, "WRONG": 0}, "lived": {"ok": 28, "missed": 20, "WRONG": 0}}}, "synthetic": {"seconds": 8.6, "overall": {"n": 10000, "right": 10000, "unsafe": 0, "cost": 0, "allreview_cost": 15000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 1000}, "scenarios": {"0": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Birth year in free-text profile", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "1": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Year-only birth date on the hit", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "2": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Name + DOB agree, country conflicts", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "3": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 1000, "name": "Rejected old check, newer approved", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "4": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Namesake 'Jr' record, shared phone", "expected": "REVIEW", "expected_code": "AMBIGUOUS_CUSTOMER_RECORD", "got": "REVIEW", "got_code": "AMBIGUOUS_CUSTOMER_RECORD"}, "5": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Second record, same phone + DOB", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "6": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Reordered, accented name", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "7": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Company with a legal form", "expected": "SAME_ENTITY", "expected_code": "NAME_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_LOCATION_MATCH"}, "8": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "No DOB and no country", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "9": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 3000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "DOB contradicts by 12 years", "expected": "DIFFERENT_ENTITY", "expected_code": "DOB_MISMATCH", "got": "DIFFERENT_ENTITY", "got_code": "DOB_MISMATCH"}}}}, "grok": {"label": "Grok red team + main", "ref": "grok-redteam", "commit": "0fc33bf", "blurb": "Everything on main plus the fixes found by the Grok red team, per-ground evidence, and a narrower company rule that keeps registry incorporation dates.", "dev": {"seconds": 17.7, "deterministic": true, "decisions": {"DIFFERENT_ENTITY": 454, "REVIEW": 249, "SAME_ENTITY": 116}}, "practice": {"n": 50, "right": 50, "unsafe": 0, "cost": 0, "allreview_cost": 108, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 50}, "redteam": {"Hand-written": {"kyc_pass": {"ok": 40, "missed": 0, "WRONG": 0}, "kyc_fail": {"ok": 40, "missed": 0, "WRONG": 0}, "age": {"ok": 24, "missed": 6, "WRONG": 0}, "death": {"ok": 9, "missed": 21, "WRONG": 0}, "lived": {"ok": 40, "missed": 0, "WRONG": 0}}, "Grok": {"kyc_pass": {"ok": 48, "missed": 0, "WRONG": 0}, "kyc_fail": {"ok": 48, "missed": 0, "WRONG": 0}, "age": {"ok": 33, "missed": 3, "WRONG": 0}, "death": {"ok": 12, "missed": 24, "WRONG": 0}, "lived": {"ok": 48, "missed": 0, "WRONG": 0}}}, "synthetic": {"seconds": 7.1, "overall": {"n": 10000, "right": 10000, "unsafe": 0, "cost": 0, "allreview_cost": 15000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 1000}, "scenarios": {"0": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Birth year in free-text profile", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "1": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Year-only birth date on the hit", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "2": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Name + DOB agree, country conflicts", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "3": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 1000, "name": "Rejected old check, newer approved", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "4": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Namesake 'Jr' record, shared phone", "expected": "REVIEW", "expected_code": "AMBIGUOUS_CUSTOMER_RECORD", "got": "REVIEW", "got_code": "AMBIGUOUS_CUSTOMER_RECORD"}, "5": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Second record, same phone + DOB", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "6": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Reordered, accented name", "expected": "SAME_ENTITY", "expected_code": "NAME_DOB_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_DOB_LOCATION_MATCH"}, "7": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 2000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "Company with a legal form", "expected": "SAME_ENTITY", "expected_code": "NAME_LOCATION_MATCH", "got": "SAME_ENTITY", "got_code": "NAME_LOCATION_MATCH"}, "8": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 0, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "No DOB and no country", "expected": "REVIEW", "expected_code": "INSUFFICIENT_DATA", "got": "REVIEW", "got_code": "INSUFFICIENT_DATA"}, "9": {"n": 1000, "right": 1000, "unsafe": 0, "cost": 0, "allreview_cost": 3000, "decision_score": 100.0, "code_pct": 100.0, "customer_pct": 100.0, "evidence_exact": 0, "name": "DOB contradicts by 12 years", "expected": "DIFFERENT_ENTITY", "expected_code": "DOB_MISMATCH", "got": "DIFFERENT_ENTITY", "got_code": "DOB_MISMATCH"}}}}}, "dev_diffs": [{"hit_id": "H-0BAB99", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2014, which is after the earliest dated report (2009-02-13). The customer is Starling Bank Limited; the listed profile is Sterling Bancshares, Inc..", "evidence": ["CUS-054177", "KYC-2D2D44"]}, {"hit_id": "H-16B821", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-11-14, which is after the earliest dated report (2018-05-15). The customer is Purdue Pharma L.P. Limited; the listed profile is Purdue Pharma Manufacturing (New York) Inc.", "evidence": ["CUS-263959", "KYC-1AD3AB"]}, {"hit_id": "H-19AC91", "nongrok": ["SAME_ENTITY", "NAME_LOCATION_MATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2012-11-14, which is after the earliest dated report (1998-03-30). The customer is Hotel Management International, Llc; the listed profile is Hotel Management Inc..", "evidence": ["CUS-124134", "KYC-709EA2"]}, {"hit_id": "H-224995", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2000-08-23, which is after the earliest dated report (1998-03-30). The customer is HOTEL MANAGEMENT INTERNATIONAL GmbH; the listed profile is Hotel Management Inc..", "evidence": ["CUS-414512", "KYC-2BF300"]}, {"hit_id": "H-2EBD19", "nongrok": ["REVIEW", "INSUFFICIENT_DATA"], "grok": ["SAME_ENTITY", "NAME_DOB_LOCATION_MATCH"], "reason": "The customer's date of birth 1955-12-23 (NOTE-AC2A9C) agrees with the hit's 1955, 1956. Both the customer and the hit are linked to Norway. The customer's name agrees with the hit's name Frank Murud.", "evidence": ["NOTE-AC2A9C", "CUS-403947"]}, {"hit_id": "H-52BE0D", "nongrok": ["REVIEW", "INSUFFICIENT_DATA"], "grok": ["DIFFERENT_ENTITY", "DOB_MISMATCH"], "reason": "The customer's date of birth is 1995-03-03 (NOTE-C6C6DA) but the hit's date of birth is 1968, 1969. The customer is CHRISTIAN ZAUM; the listed profile is Christian Zaum.", "evidence": ["NOTE-C6C6DA"]}, {"hit_id": "H-683987", "nongrok": ["REVIEW", "INSUFFICIENT_DATA"], "grok": ["DIFFERENT_ENTITY", "DOB_MISMATCH"], "reason": "The customer's date of birth is 1995-12-17 (KYC-DE8245) but the hit's date of birth is 1986, 1987. The customer is Tomasz Matteo Drozd; the listed profile is Drozd, Tomasz Paweł.", "evidence": ["KYC-DE8245"]}, {"hit_id": "H-75D62E", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2014, which is after the earliest dated report (2009-06-05). The customer is Starling Bank Limited; the listed profile is Sterling Bank.", "evidence": ["CUS-054177", "KYC-2D2D44"]}, {"hit_id": "H-7C4D8E", "nongrok": ["DIFFERENT_ENTITY", "NAME_MISMATCH_VERIFIED"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-11-14, which is after the earliest dated report (2019-05-30). The customer is Purdue Pharma L.P. Limited; the listed profile is Purdue Pharmaceutical Products L.P..", "evidence": ["CUS-263959", "KYC-1AD3AB"]}, {"hit_id": "H-80FEC3", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["REVIEW", "INSUFFICIENT_DATA"], "reason": "Both the customer and the hit are linked to Pakistan. Nothing in the customer's records contradicts the hit, and the customer's name agrees with the hit's name Muhammad Nadeem, and the date of birth cannot be compared with it, so the hit can be neither cleared nor confirmed. Missing from the comparison: the hit has no usable date of birth.", "evidence": ["NOTE-9D3BB0"]}, {"hit_id": "H-85717C", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2014, which is after the earliest dated report (2009-10-09). The customer is Starling Bank Limited; the listed profile is Sterling Savings Bank.", "evidence": ["CUS-054177", "KYC-2D2D44"]}, {"hit_id": "H-8DAC34", "nongrok": ["SAME_ENTITY", "NAME_LOCATION_MATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2014, which is after the earliest dated report (2013-04-01). The customer is Starling Bank Limited; the listed profile is Sterling Bank Plc.", "evidence": ["CUS-054177", "KYC-2D2D44"]}, {"hit_id": "H-A3B158", "nongrok": ["SAME_ENTITY", "NAME_LOCATION_MATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2008, which is after the earliest dated report (2007-11-16). The customer is TD Bank, N.A.; the listed profile is The Toronto-Dominion Bank.", "evidence": ["CUS-848754", "KYC-C9076F"]}, {"hit_id": "H-D9BFBD", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-11-14, which is after the earliest dated report (2018-05-15). The customer is Purdue Pharma L.P. Limited; the listed profile is Purdue Pharma of North Carolina L.P..", "evidence": ["CUS-263959", "KYC-1AD3AB"]}, {"hit_id": "H-DC6F0F", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2014, which is after the earliest dated report (2000-02). The customer is Starling Bank Limited; the listed profile is Sterling Bank & Trust Co..", "evidence": ["CUS-054177", "KYC-2D2D44"]}, {"hit_id": "H-E31B13", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-11-14, which is after the earliest dated report (2017-10-31). The customer is Purdue Pharma L.P. Limited; the listed profile is Purdue Pharma Inc..", "evidence": ["CUS-263959", "KYC-1AD3AB"]}, {"hit_id": "H-E7BFE8", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-11-14, which is after the earliest dated report (2017-10-31). The customer is Purdue Pharma L.P. Limited; the listed profile is Purdue Pharma L.P..", "evidence": ["CUS-263959", "KYC-1AD3AB"]}, {"hit_id": "H-FA8509", "nongrok": ["DIFFERENT_ENTITY", "LOCATION_MISMATCH"], "grok": ["DIFFERENT_ENTITY", "TEMPORAL_IMPOSSIBILITY"], "reason": "The company was incorporated on 2021-12-16, which is after the earliest dated report (2015-09-25). The customer is Port Authority of New York and New Jersey Ltd; the listed profile is Port Authority of New York and New Jersey.", "evidence": ["CUS-179806", "KYC-512BAD"]}], "synthetic_present": true, "scenarios": {"0": "Birth year in free-text profile", "1": "Year-only birth date on the hit", "2": "Name + DOB agree, country conflicts", "3": "Rejected old check, newer approved", "4": "Namesake 'Jr' record, shared phone", "5": "Second record, same phone + DOB", "6": "Reordered, accented name", "7": "Company with a legal form", "8": "No DOB and no country", "9": "DOB contradicts by 12 years"}}</script>
+<script>
+const D = JSON.parse(document.getElementById('results').textContent || '{}');
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = n => Number(n).toLocaleString('en-GB');
+const CAT = {kyc_pass:'KYC passed', kyc_fail:'KYC failed', age:'Ages', death:'Deaths', lived:'Places lived'};
+const pill = d => `<span class="pill ${d}">${d === 'DIFFERENT_ENTITY' ? 'Cleared' : d === 'SAME_ENTITY' ? 'Confirmed' : 'Review'}</span>`;
+let cur = null;
+
+function wrong(v, src){ const r = D.results[v].redteam[src]; return r ? Object.values(r).reduce((a, c) => a + c.WRONG, 0) : null; }
+function total(v, src){ const r = D.results[v].redteam[src]; return r ? Object.values(r).reduce((a, c) => a + c.ok + c.missed + c.WRONG, 0) : 0; }
+
+function init(){
+  if (!D.versions){ $('#kpis').innerHTML = '<div class="card">No results yet — run tools/build_test_dashboard.py.</div>'; return; }
+  $('#built').textContent = D.generated;
+  $('#ver').innerHTML = D.versions.map(v => `<option value="${v}">${esc(D.results[v].label)} · ${esc(D.results[v].commit)}</option>`).join('');
+  cur = D.versions[D.versions.length - 1]; $('#ver').value = cur;
+  $('#ver').onchange = e => { cur = e.target.value; render(); };
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('main > section').forEach(s => s.hidden = s.id !== 't-' + b.dataset.t);
+  });
+  $('#dn').textContent = D.dev_diffs.length;
+  compare(); diffs(); render();
+}
+
+function render(){
+  const R = D.results[cur]; $('#vdesc').textContent = R.blurb;
+  const p = R.practice, s = R.synthetic, gw = wrong(cur, 'Grok'), hw = wrong(cur, 'Hand-written');
+  const k = [
+    ['Practice decision score', p.decision_score.toFixed(1), `${p.right}/${p.n} right · ${p.unsafe} unsafe`, p.unsafe ? 'r' : 'g'],
+    ['Evidence = reference', `${p.evidence_exact}/${p.right}`, `codes ${p.code_pct}% · customers ${p.customer_pct}%`, p.evidence_exact === p.right ? 'g' : 'a'],
+    ['Red team WRONG (Grok)', gw ?? '–', gw === null ? 'no Grok run cached' : `of ${fmt(total(cur,'Grok'))} Grok sentences`, gw ? 'r' : 'g'],
+    ['Red team WRONG (hand)', hw, `of ${fmt(total(cur,'Hand-written'))} hand-written`, hw ? 'r' : 'g'],
+    s ? ['Synthetic benchmark', fmt(s.overall.right), `of ${fmt(s.overall.n)} · ${s.overall.unsafe} unsafe`, s.overall.unsafe ? 'r' : 'g'] : null,
+    ['Dev run', `${R.dev.seconds}s`, R.dev.deterministic ? 'two runs byte-identical' : 'runs DIFFER', R.dev.deterministic ? 'b' : 'r'],
+  ].filter(Boolean);
+  $('#kpis').innerHTML = k.map(([l, v, sub, c]) => `<div class="kpi ${c}"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`).join('');
+  redteam(); synthetic();
+}
+
+function compare(){
+  const V = D.versions, res = V.map(v => D.results[v]);
+  const rows = [
+    ['Practice: right decisions (of 50)', r => r.practice.right, 'max'],
+    ['Practice: unsafe clearances', r => r.practice.unsafe, 'min'],
+    ['Practice: decision score', r => r.practice.decision_score, 'max'],
+    ['Practice: evidence equals reference', r => r.practice.evidence_exact, 'max'],
+    ['Practice: reason code accepted (%)', r => r.practice.code_pct, 'max'],
+    ['Red team WRONG – Grok wordings', r => r.redteam.Grok ? Object.values(r.redteam.Grok).reduce((a,c)=>a+c.WRONG,0) : '–', 'min'],
+    ['Red team WRONG – hand-written', r => Object.values(r.redteam['Hand-written']).reduce((a,c)=>a+c.WRONG,0), 'min'],
+    ['Red team missed – Grok wordings', r => r.redteam.Grok ? Object.values(r.redteam.Grok).reduce((a,c)=>a+c.missed,0) : '–', 'min'],
+    ['…failed KYC checks read as passed (hand)', r => r.redteam['Hand-written'].kyc_fail.WRONG, 'min'],
+    D.synthetic_present ? ['Synthetic: right decisions (of 10,000)', r => r.synthetic.overall.right, 'max'] : null,
+    D.synthetic_present ? ['Synthetic: unsafe clearances', r => r.synthetic.overall.unsafe, 'min'] : null,
+    ['Dev: cleared / confirmed / review', r => `${r.dev.decisions.DIFFERENT_ENTITY||0} / ${r.dev.decisions.SAME_ENTITY||0} / ${r.dev.decisions.REVIEW||0}`, null],
+    ['Dev: run time (s)', r => r.dev.seconds, null],
+    ['Dev: two runs identical', r => r.dev.deterministic ? 'yes' : 'NO', null],
+  ].filter(Boolean);
+  let h = `<table><thead><tr><th>Test</th>${res.map(r => `<th class="num">${esc(r.label)}<br><span class="mono" style="text-transform:none">${esc(r.commit)}</span></th>`).join('')}</tr></thead><tbody>`;
+  for (const [name, f, best] of rows){
+    const vals = res.map(f), nums = vals.filter(x => typeof x === 'number');
+    const hi = Math.max(...nums), lo = Math.min(...nums), spread = nums.length > 1 && hi !== lo;
+    h += `<tr><td>${name}</td>${vals.map(x => {
+      let cls = 'num';
+      if (best && spread && typeof x === 'number'){ if (x === (best === 'max' ? hi : lo)) cls += ' best'; else if (x === (best === 'max' ? lo : hi)) cls += ' worst'; }
+      return `<td class="${cls}">${typeof x === 'number' ? fmt(x) : esc(x)}</td>`; }).join('')}</tr>`;
+  }
+  $('#cmp').innerHTML = h + '</tbody></table>';
+}
+
+function redteam(){
+  const R = D.results[cur].redteam;
+  $('#rt').innerHTML = Object.entries(R).sort().map(([src, cats]) => `<div class="card"><h3>${esc(src)} wordings</h3>${
+    Object.entries(cats).map(([c, t]) => { const n = t.ok + t.missed + t.WRONG || 1;
+      return `<div class="bar"><span class="lab">${CAT[c] || c}</span><span class="trk">${['ok','missed','WRONG'].map(o => t[o] ? `<span class="seg ${o}" style="width:${100*t[o]/n}%" title="${o}: ${t[o]}"></span>` : '').join('')}</span><span class="num">${t.ok}/${n}${t.WRONG ? ` · <b style="color:var(--red)">${t.WRONG} WRONG</b>` : ''}</span></div>`; }).join('')}</div>`).join('');
+  const V = D.versions, cats = Object.keys(CAT);
+  let h = `<table><thead><tr><th>Wordings</th><th>Reader</th>${V.map(v => `<th class="num">${esc(D.results[v].label)}</th>`).join('')}</tr></thead><tbody>`;
+  for (const src of ['Grok', 'Hand-written']) for (const c of cats){
+    if (!D.results[V[0]].redteam[src]) continue;
+    h += `<tr><td>${src}</td><td>${CAT[c]}</td>${V.map(v => { const t = D.results[v].redteam[src][c];
+      return `<td class="num">${t.WRONG ? `<span class="pill bad">${t.WRONG} WRONG</span>` : '<span class="pill ok">0</span>'} <span class="code">${t.missed} missed</span></td>`; }).join('')}</tr>`;
+  }
+  $('#rtcmp').innerHTML = h + '</tbody></table>';
+}
+
+function synthetic(){
+  if (!D.synthetic_present){ $('#syn').innerHTML = '<div class="note">Synthetic benchmark not found when the page was built.</div>'; return; }
+  const V = D.versions, sc = D.results[cur].synthetic.scenarios;
+  let h = `<table><thead><tr><th>#</th><th>Scenario</th><th>Expected</th>${V.map(v => `<th class="num">${esc(D.results[v].label)}<br>right · unsafe</th>`).join('')}<th>Code (selected)</th></tr></thead><tbody>`;
+  for (const m of Object.keys(sc)){
+    const s = sc[m];
+    h += `<tr><td class="mono">${m}</td><td>${esc(s.name)}</td><td>${pill(s.expected)} <span class="code">${esc(s.expected_code)}</span></td>${
+      V.map(v => { const x = D.results[v].synthetic.scenarios[m];
+        return `<td class="num">${fmt(x.right)}/${fmt(x.n)} · ${x.unsafe ? `<span class="pill bad">${x.unsafe}</span>` : '<span class="pill ok">0</span>'}</td>`; }).join('')
+    }<td>${s.code_pct === 100 ? '<span class="pill ok">100%</span>' : `<span class="pill mid">${s.code_pct}%</span> <span class="code">we say ${esc(s.got_code)}</span>`}</td></tr>`;
+  }
+  $('#syn').innerHTML = h + '</tbody></table>';
+  const o = D.results[cur].synthetic;
+  $('#synnote').innerHTML = `Selected version: <b>${fmt(o.overall.right)}/${fmt(o.overall.n)}</b> right, <b>${o.overall.unsafe}</b> unsafe, decision score <b>${o.overall.decision_score}</b>, ${o.seconds}s for 10,000 hits. ` +
+    `Scenario 4 expects <span class="mono">AMBIGUOUS_CUSTOMER_RECORD</span>; the alert's account links to one customer and the 'Jr' record shares only phone and address, which POLICY.md principle 3 says does not make one person, so we answer <span class="mono">REVIEW</span> with <span class="mono">INSUFFICIENT_DATA</span> — same decision, different code. ` +
+    `This benchmark does not separate the versions: its free-text scenario also gives the birth date in the structured field, and its company "date of birth" note is a support note, which no version reads as an identity check. The red team is where the versions differ.`;
+}
+
+function diffs(){
+  const L = D.dev_diffs;
+  if (!L.length){ $('#diffs').innerHTML = '<div class="note">No differences.</div>'; return; }
+  $('#diffs').innerHTML = `<table><thead><tr><th>Hit</th><th>Non-Grok</th><th>Grok version</th><th>Why (Grok version's reason)</th><th>Evidence</th></tr></thead><tbody>${
+    L.map(d => `<tr><td class="mono">${esc(d.hit_id)}</td><td>${pill(d.nongrok[0])}<div class="code">${esc(d.nongrok[1])}</div></td><td>${pill(d.grok[0])}<div class="code">${esc(d.grok[1])}</div></td><td>${esc(d.reason)}</td><td>${d.evidence.map(e => `<span class="chip mono">${esc(e)}</span>`).join('')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+init();
+</script>
+</body>
+</html>
