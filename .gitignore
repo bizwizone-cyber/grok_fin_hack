@@ -23,3 +23,7 @@ fixture/
 
 # Red-team output (local only)
 redteam_out/
+
+# Dashboard secrets (keep the placeholder template tracked)
+dashboard/.env
+!dashboard/.env.example

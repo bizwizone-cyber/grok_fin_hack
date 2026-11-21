@@ -360,7 +360,16 @@ _COUNTRY_SCAN = tuple(sorted(
 ))
 
 
+# Letters NFKD does not decompose: fold them like accents so "Weiß"=="Weiss", "Østergaard"=="Ostergaard".
+_FOLD_EXTRA = str.maketrans({
+    "ß": "ss", "ẞ": "SS", "ø": "o", "Ø": "O", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE",
+    "đ": "d", "Đ": "D", "ð": "d", "Ð": "D", "ł": "l", "Ł": "L", "ı": "i", "İ": "I",
+    "þ": "th", "Þ": "TH", "ħ": "h", "Ħ": "H",
+})
+
+
 def _fold(text):
+    text = str(text).translate(_FOLD_EXTRA)
     return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
 
 
@@ -459,6 +468,30 @@ class PDate:
         return self.equal_known(other)
 
 
+_MONTH_ALT = r"(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+
+
+def _normalise_date_text(text):
+    """Rewrite other common date spellings into forms the matchers already read.
+
+    5th March 2001 / March 5th, 2001 -> ordinals dropped; 05-Mar-2001 / 05.Mar.2001 ->
+    "05 Mar 2001"; 2001/03/05 and 2001.03.05 -> ISO; 05.03.2001 / 05-03-2001 -> 05/03/2001;
+    "YYYY-00-00" -> year; "circa 1960" / "c. 1960" / "about 1960" -> year. Two-digit
+    years are left alone (unreadable stays unknown).
+    """
+    if not text:
+        return text
+    t = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", text, flags=re.I)
+    t = re.sub(r"\b(\d{1,2})[-./ ](" + _MONTH_ALT + r")\.?[-./ ](\d{4})\b", r"\1 \2 \3", t, flags=re.I)
+    t = re.sub(r"\b(" + _MONTH_ALT + r")\.(?=\s)", r"\1", t, flags=re.I)
+    t = re.sub(r"\b(\d{4})[/.](\d{1,2})[/.](\d{1,2})\b", r"\1-\2-\3", t)
+    t = re.sub(r"\b(\d{1,2})[.-](\d{1,2})[.-](\d{4})\b", r"\1/\2/\3", t)
+    t = re.sub(r"\b(\d{4})-00(?:-00)?\b", r"\1", t)
+    t = re.sub(r"\b(\d{4}-\d{2})-00\b", r"\1", t)
+    t = re.sub(r"^(?:circa|ca\.?|c\.|about|approx\.?|approximately|around)\s*(\d{4})$", r"\1", t.strip(), flags=re.I)
+    return t
+
+
 def parse_date(val):
     if val is None or val == "":
         return None
@@ -469,15 +502,21 @@ def parse_date(val):
     if isinstance(val, (int, float)):
         y = int(val)
         return PDate(y) if 1800 <= y <= 2100 else None
-    text = str(val).strip()
+    text = _normalise_date_text(str(val).strip())
     if not text or text.lower() in PLACEHOLDERS:
         return None
-    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    m = re.fullmatch(r"(\d{4})[-.](\d{1,2})[-.](\d{1,2})", text) or re.fullmatch(r"(\d{4})(\d{2})(\d{2})", text)
     if m:
-        return PDate(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1800 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31:
+            return PDate(y, mo, d)
+        return None
     m = re.fullmatch(r"(\d{4})-(\d{1,2})", text)
     if m:
-        return PDate(int(m.group(1)), int(m.group(2)))
+        y, mo = int(m.group(1)), int(m.group(2))
+        if 1800 <= y <= 2100 and 1 <= mo <= 12:
+            return PDate(y, mo)
+        return None
     m = re.fullmatch(r"(\d{4})", text)
     if m:
         y = int(m.group(1))
@@ -532,7 +571,9 @@ def parse_date(val):
 # =============================================================================
 
 def strip_accents(text):
-    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+    if text is None:
+        return ""
+    return _fold(text)
 
 
 def norm_space(text):
@@ -547,10 +588,12 @@ def country_of(val):
         # shouldn't happen at this layer
         return None
     text = strip_accents(str(val)).strip()
-    text = re.sub(r"\[.*?\]", "", text).strip(" ,;.")
+    text = re.sub(r"\[.*?\]", "", text).replace("\u2019", "'").replace("\u2018", "'").strip(" ,;.")
     if not text:
         return None
     low = re.sub(r"\s+", " ", text.lower())
+    if low.replace(".", "") in {"us", "usa", "uk", "uae"} and "." in low:
+        low = low.replace(".", "")
     if low in NOT_COUNTRIES or low in PLACEHOLDERS:
         return None
     if low in COUNTRY_MAP:
@@ -564,6 +607,13 @@ def country_of(val):
     # trailing "the United States"
     if low.startswith("the ") and low[4:] in COUNTRY_MAP:
         return COUNTRY_MAP[low[4:]]
+    # formal names: "Federal Republic of Germany", "Kingdom of Spain", "Islamic Republic of Iran"
+    fm = re.fullmatch(r"(?:the\s+)?(?:(?:federal|islamic|democratic|people's|socialist|united|arab|"
+                      r"plurinational|bolivarian|federative|hashemite|commonwealth|independent)\s+)*"
+                      r"(?:republic|kingdom|state|states|federation|principality|grand duchy|sultanate|emirate)"
+                      r"\s+of\s+(?:the\s+)?(.+)", low)
+    if fm and fm.group(1) in COUNTRY_MAP:
+        return COUNTRY_MAP[fm.group(1)]
     return None
 
 
@@ -623,6 +673,9 @@ def countries_in_text(text):
     return found
 
 
+_US_STATES = frozenset("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split())
+
+
 def last_address_country(addr):
     if not addr:
         return None
@@ -631,6 +684,10 @@ def last_address_country(addr):
         return None
     # last comma-separated token, skipping postcodes
     parts = [p.strip() for p in text.split(",") if p.strip()]
+    if len(parts) >= 2 and re.fullmatch(r"[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?", parts[-1]) and parts[-1][:2] in _US_STATES:
+        return "United States"   # "Springfield, IL" is Illinois, not Israel
+    if len(parts) >= 2 and parts[-1].lower() == "georgia":
+        return None              # US state or the country: unknown, so never a contradiction
     for part in reversed(parts):
         c = country_of(part)
         if c:
@@ -890,25 +947,168 @@ def linkage_score(levels, company=False):
 # IO
 # =============================================================================
 
+def _decode_line(raw):
+    """Decode one JSONL line, tolerating BOM, Latin-1 leftovers and bad bytes."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    for enc in ("utf-8", "utf-8-sig"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def read_jsonl(path):
+    """Read a JSONL file without crashing the run on a bad line or encoding.
+
+    Missing files yield an empty list (optional inputs). Blank lines, a UTF-8 BOM,
+    CRLF, unknown extra fields, and a single malformed or non-UTF-8 line are skipped
+    rather than aborting the process. Non-object rows are ignored.
+    """
     rows = []
     path = Path(path)
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return rows
-    with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return rows
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        text = _decode_line(line).strip()
+        if not text:
+            continue
+        try:
+            row = json.loads(text)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
     return rows
 
 
 def read_json(path):
     path = Path(path)
-    if not path.exists():
+    if not path.exists() or not path.is_file():
         return None
-    with path.open(encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    for enc in ("utf-8", "utf-8-sig"):
+        try:
+            data = json.loads(raw.decode(enc))
+            break
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            data = None
+    else:
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return data if isinstance(data, (dict, list)) else None
+
+
+def as_list(val):
+    """Coerce a field that should be a list (dobs, countries, aliases, addresses)."""
+    if val is None or val == "":
+        return []
+    if isinstance(val, list):
+        return val
+    if isinstance(val, tuple):
+        return list(val)
+    if isinstance(val, dict):
+        return list(val.values()) if val else []
+    return [val]
+
+
+def as_text(val):
+    if val is None or val == "":
+        return ""
+    if isinstance(val, (list, tuple, dict)):
+        return ""
+    return str(val)
+
+
+def fallback_prediction(hit, alert=None):
+    """A valid REVIEW line so a crash on one hit cannot zero the run."""
+    hit = hit if isinstance(hit, dict) else {}
+    alert = alert if isinstance(alert, dict) else {}
+    return {
+        "hit_id": hit.get("hit_id"),
+        "alert_id": hit.get("alert_id") or alert.get("alert_id"),
+        "decision": "REVIEW",
+        "reason_code": "INSUFFICIENT_DATA",
+        "customer_record_id": None,
+        "reason": (
+            "The system could not finish the comparison for this hit because a record "
+            "was missing or unreadable. The hit is sent to review so it is neither "
+            "cleared nor confirmed."
+        ),
+        "evidence": [],
+    }
+
+
+def _sentences(text):
+    """Split a reason into sentences, keeping Inc./Ltd./(MTA). with their clause."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    abbrev = {
+        "inc", "ltd", "llc", "corp", "co", "plc", "sa", "s.a", "s.l", "jr", "sr",
+        "mr", "mrs", "ms", "dr", "st", "u.s", "u.k", "d.o.b", "no", "nos",
+    }
+    parts, buf = [], []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        buf.append(ch)
+        if ch in ".!?":
+            nxt = text[i + 1] if i + 1 < n else ""
+            if ch == "." and nxt and not nxt.isspace() and nxt not in "\"')]}":
+                i += 1
+                continue
+            word = "".join(buf).rstrip()
+            token = word.split()[-1].rstrip(".)").lower() if word.split() else ""
+            # "Inc." or "U.S." or a trailing initial "A."
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            nxt_ns = text[j] if j < n else ""
+            # "Inc." / "Ltd." / initial "A." are abbreviations only when not
+            # followed by a new capitalised sentence.
+            if ch == "." and (token in abbrev or (len(token) == 1 and token.isalpha())):
+                if not (nxt_ns.isalpha() and nxt_ns.isupper()):
+                    i += 1
+                    continue
+            # Lookahead: next clause starting with "(" is a leftover acronym
+            if nxt_ns == "(":
+                i += 1
+                continue
+            parts.append("".join(buf).strip())
+            buf = []
+            i += 1
+            while i < n and text[i].isspace():
+                i += 1
+            continue
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return [p for p in parts if p]
+
+
+def ident_cite(ident):
+    if not ident:
+        return ""
+    iid = ident.get("check_id") or ident.get("note_id") or ""
+    return f" ({iid})" if iid else ""
 
 
 # =============================================================================
@@ -958,9 +1158,9 @@ KYC_FAIL_RE = re.compile(
 # wrongly clear on LOCATION_MISMATCH, so this list errs wide: an extra country
 # can only block a location clearance.
 LIVED_RE = re.compile(
-    r"\b(?:liv(?:ed|ing|es)|residen(?:cy|ce|t|ts|tial)|resid(?:ed|ing|es)|worked|working|"
+    r"\b(?:liv(?:e|es|ed|ing)|residen(?:cy|ce|ces|t|ts|tial)|resid(?:e|es|ed|ing)|worked|working|"
     r"employ(?:ed|ment)|based in|household|home|job in|address(?:es)?|relocat\w*|moved|"
-    r"grew up|studied|abroad|tax residen\w*|stayed|settled|emigrated|immigrated|"
+    r"grew up|studied|abroad|tax residen\w*|stayed|staying|settled|dwelt|domiciled|emigrated|immigrated|"
     # found by the Grok red team, approved by hand
     r"places the customer in|posting|posted|stationed|work history|career|time in)\b",
     re.I,
@@ -1029,7 +1229,7 @@ def dob_from_note_text(text):
 
 def parse_kyc_note(note):
     """Return dict or None for an approved identity check written only in a note."""
-    text = note.get("text") or ""
+    text = _normalise_date_text(note.get("text") or "")
         # A note in the KYC channel records a completed check; providers word a pass
     # many ways ("passed", "approved", "matches", "finalized"), but a failure always
     # says so. Outside the KYC channel, require an explicit success word.
@@ -1076,7 +1276,7 @@ def parse_kyc_note(note):
             continue
         if all(t.upper() in skip or country_of(t) for t in toks):
             continue
-        name = re.sub(r"[,;]\s*(?:DOB|D\.O\.B\.?|born|birth).*", "", cand, flags=re.I).strip(" ,;")
+        name = re.sub(r"[,;]\s*(?:DOB|D\.O\.B\.?|born|birth).*", "", cand, flags=re.I).strip(" ,;.")
         if len(re.split(r"[\s,]+", name)) >= 2:
             break
         name = None
@@ -1096,6 +1296,12 @@ def parse_kyc_note(note):
     m = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
     if m:
         checked = parse_date(m.group(1)) or checked
+    # A birth date equal to (or after) the check date is the check date misread, not a DOB.
+    if dob and checked and (dob == checked or (dob.date_min() and checked.date_max() and dob.date_min() > checked.date_max())):
+        dob = None
+    created = parse_date(note.get("created_at"))
+    if dob and created and dob == created:
+        dob = None
     if not name and not dob:
         return None
     return {
@@ -1138,33 +1344,57 @@ def load_bank(data_folder):
     variants = read_json(root / "name_variants.json") or {}
     b.ns = NameSystem(variants.get("groups") or [], variants.get("company_legal_forms") or [])
 
+    # Canonical entity types ("Organisation", "person" ...) and drop rows that are not objects.
+    for rows in (b.alerts, b.hits, b.customers, b.accounts, b.onboarding, b.kyc_checks, b.notes, b.search_results):
+        rows[:] = [r for r in rows if isinstance(r, dict)]
+    for h in b.hits:
+        if "entity_type" in h:
+            h["entity_type"] = canon_etype(h.get("entity_type"))
+    for c in b.customers:
+        if "entity_type" in c:
+            c["entity_type"] = canon_etype(c.get("entity_type"))
+    for a in b.alerts:
+        if isinstance(a.get("customer"), dict) and "entity_type" in a["customer"]:
+            a["customer"]["entity_type"] = canon_etype(a["customer"].get("entity_type"))
+    b.alerts = [a for a in b.alerts if a.get("alert_id")]
+    b.hits = [h for h in b.hits if h.get("hit_id")]
     b.alerts_by_id = {a["alert_id"]: a for a in b.alerts}
     b.hits_by_id = {h["hit_id"]: h for h in b.hits}
-    b.customers_by_id = {c["record_id"]: c for c in b.customers}
+    b.customers_by_id = {c["record_id"]: c for c in b.customers if c.get("record_id")}
 
     b.accounts_by_id = defaultdict(list)
     b.accounts_by_login = defaultdict(list)
     b.accounts_by_customer = defaultdict(list)
     for a in b.accounts:
-        b.accounts_by_id[a["account_id"]].append(a)
-        if a.get("login_handle"):
-            b.accounts_by_login[a["login_handle"]].append(a)
-            b.accounts_by_login[str(a["login_handle"]).lower()].append(a)
-        b.accounts_by_customer[a["customer_id"]].append(a)
+        acc_id = a.get("account_id")
+        if acc_id:
+            b.accounts_by_id[acc_id].append(a)
+        login = a.get("login_handle")
+        if login is not None and login != "":
+            b.accounts_by_login[login].append(a)
+            b.accounts_by_login[str(login).lower()].append(a)
+        cid = a.get("customer_id")
+        if cid:
+            b.accounts_by_customer[cid].append(a)
 
     b.onboarding_by_account = defaultdict(list)
     b.onboarding_by_customer = defaultdict(list)
     b.onboarding_by_applicant = defaultdict(list)
     for o in b.onboarding:
-        b.onboarding_by_account[o["account_id"]].append(o)
-        b.onboarding_by_customer[o["customer_id"]].append(o)
-        b.onboarding_by_applicant[o["kyc_applicant_id"]].append(o)
+        if o.get("account_id"):
+            b.onboarding_by_account[o["account_id"]].append(o)
+        if o.get("customer_id"):
+            b.onboarding_by_customer[o["customer_id"]].append(o)
+        if o.get("kyc_applicant_id"):
+            b.onboarding_by_applicant[o["kyc_applicant_id"]].append(o)
 
     b.kyc_by_applicant = defaultdict(list)
     b.kyc_approved_by_doc = defaultdict(list)
     for k in b.kyc_checks:
-        b.kyc_by_applicant[k["applicant_id"]].append(k)
-        if (k.get("result") or "").lower() == "approved":
+        app = k.get("applicant_id")
+        if app:
+            b.kyc_by_applicant[app].append(k)
+        if as_text(k.get("result")).lower() == "approved":
             doc = normalise_docno(k.get("document_number"))
             if doc:
                 b.kyc_approved_by_doc[doc].append(k)
@@ -1172,17 +1402,20 @@ def load_bank(data_folder):
     b.customers_by_email = defaultdict(list)
     b.customers_by_phone = defaultdict(list)
     for c in b.customers:
-        if c.get("email"):
-            b.customers_by_email[c["email"].lower()].append(c)
+        em = c.get("email")
+        if isinstance(em, str) and em:
+            b.customers_by_email[em.lower()].append(c)
         ph = normalise_phone(c.get("phone"))
         if ph:
             b.customers_by_phone[ph].append(c)
 
     b.notes_by_email = defaultdict(list)
     for n in b.notes:
-        em = (n.get("requester_email") or "").lower()
-        if em:
-            b.notes_by_email[em].append(n)
+        em = n.get("requester_email")
+        if isinstance(em, str) and em:
+            b.notes_by_email[em.lower()].append(n)
+        elif em:
+            b.notes_by_email[str(em).lower()].append(n)
 
     b.search_by_query = defaultdict(list)
     b.search_by_sorted = defaultdict(list)
@@ -1196,7 +1429,7 @@ def load_bank(data_folder):
             b.search_by_sorted[key].append(s)
 
     # Global same-person clusters (principle 3), union-find
-    parent = {c["record_id"]: c["record_id"] for c in b.customers}
+    parent = {c["record_id"]: c["record_id"] for c in b.customers if c.get("record_id")}
 
     def find(x):
         while parent[x] != x:
@@ -1251,7 +1484,7 @@ def load_bank(data_folder):
     b.approved_kyc_for = defaultdict(list)
     for o in b.onboarding:
         for k in b.kyc_by_applicant.get(o["kyc_applicant_id"], []):
-            if (k.get("result") or "").lower() == "approved":
+            if as_text(k.get("result")).lower() == "approved" and o.get("customer_id"):
                 b.approved_kyc_for[o["customer_id"]].append(k)
 
     # dob index for unlinked search
@@ -1286,7 +1519,8 @@ def customer_names(c):
 def notes_for_records(bank, records):
     notes, seen = [], set()
     for c in records:
-        em = (c.get("email") or "").lower()
+        em = c.get("email")
+        em = em.lower() if isinstance(em, str) else (str(em).lower() if em else "")
         if not em:
             continue
         for n in bank.notes_by_email.get(em, []):
@@ -1529,9 +1763,11 @@ def build_person(records, bank, screened=None):
         + [ident.get("document_country_raw") if ident else None]
     )
     etypes = {(c.get("entity_type") or "") for c in records}
-    if "Company" in etypes and "Individual" not in etypes:
+    has_co = any(is_company(t) for t in etypes)
+    has_ind = any(is_person(t) for t in etypes)
+    if has_co and not has_ind:
         etype = "Company"
-    elif "Individual" in etypes and "Company" not in etypes:
+    elif has_ind and not has_co:
         etype = "Individual"
     else:
         etype = (records[0].get("entity_type") if records else None) or (
@@ -1576,8 +1812,7 @@ def resolve_people(alert, bank):
 
 DATED_REPORT_RE = re.compile(
     r"According to .+?;\s*("
-    r"(?:January|February|March|April|May|June|July|August|September|October|November|December|"
-    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?"
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
     r"(?:\s+\d{1,2},)?\s+\d{4}"
     r")\s*:",
     re.I,
@@ -1715,7 +1950,7 @@ def extract_age_years(text):
 def listing_phrase_for(hit):
     cat = (hit.get("primary_category") or "")
     if not cat:
-        cats = hit.get("categories") or []
+        cats = as_list(hit.get("categories"))
         cat = cats[0] if cats else ""
     key = (cat or "").strip().lower()
     return LISTING_PHRASE.get(key, DEFAULT_LISTING_PHRASE)
@@ -1731,7 +1966,7 @@ def hit_countries(hit):
             vals.append(v)
     if hit.get("place_of_birth"):
         vals.append(hit["place_of_birth"])
-    for addr in hit.get("addresses") or []:
+    for addr in as_list(hit.get("addresses")):
         c = last_address_country(addr)
         if c:
             vals.append(c)
@@ -1740,7 +1975,7 @@ def hit_countries(hit):
 
 def hit_unrecognised_countries(hit):
     vals = [hit.get(k) for k in ("countries", "nationality", "citizenship", "place_of_birth")]
-    for addr in hit.get("addresses") or []:
+    for addr in as_list(hit.get("addresses")):
         # An address is unrecognised only when no part of it names a country.
         if addr and not last_address_country(addr):
             parts = [p for p in re.sub(r"\[.*?\]", "", str(addr)).split(",") if p.strip()]
@@ -1756,14 +1991,21 @@ def hit_names(hit):
         pass
     for key in ("name", "best_matching_name"):
         v = hit.get(key)
-        if v and v not in names:
-            names.append(v)
-    for a in hit.get("aliases") or []:
-        text = re.sub(r"\s*\((?:AKA|FKA|NKA)\)\s*$", "", str(a), flags=re.I).strip()
-        if text and text not in names:
-            names.append(text)
+        if isinstance(v, (list, tuple)):
+            for item in v:
+                t = as_text(item)
+                if t and t not in names:
+                    names.append(t)
+            continue
+        t = as_text(v)
+        if t and t not in names:
+            names.append(t)
+    for a in as_list(hit.get("aliases")):
+        alias_text = re.sub(r"\s*\((?:AKA|FKA|NKA)\)\s*$", "", as_text(a), flags=re.I).strip()
+        if alias_text and alias_text not in names:
+            names.append(alias_text)
     # constructed "first middle last" if pieces exist
-    pieces = [hit.get("first_name"), hit.get("middle_name"), hit.get("last_name")]
+    pieces = [as_text(hit.get("first_name")), as_text(hit.get("middle_name")), as_text(hit.get("last_name"))]
     built = " ".join(p for p in pieces if p)
     if built and built not in names:
         names.append(built)
@@ -1781,25 +2023,47 @@ def dated_reports(profile_notes):
     return dates
 
 
+_DEATH_RE = re.compile(
+    r"\b(?:died|deceased|date of death|passed away|death)\b\s*[:,(]?\s*(?:on\s+|in\s+|:\s*)?"
+    r"(\d{4}-\d{2}(?:-\d{2})?|\d{1,2}/\d{1,2}/\d{4}|"
+    r"(?:\d{1,2}\s+)?(?:January|February|March|April|May|June|July|August|"
+    r"September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+    r"(?:\s+\d{1,2},?)?\s+\d{4}|\d{4})\b",
+    re.I,
+)
+# A death in the notes must be the listed person's, not a relative's or a victim's.
+_OTHER_PERSON_RE = re.compile(
+    r"\b(?:late|father|mother|wife|husband|son|daughter|brother|sister|spouse|partner|uncle|aunt|"
+    r"cousin|relative|grandfather|grandmother|parent|parents|child|children|associate|victim|victims|"
+    r"people|persons|man|woman|men|women|who|whose|after|following|killed|murder(?:ed)?)\b",
+    re.I,
+)
+
+
 def death_date(hit):
     d = parse_date(hit.get("deceased_date"))
     if d:
         return d
     notes = hit.get("profile_notes") or ""
-    # Only wordings that say the listed person is dead ("killed" is left out: it
-    # is as often something the person did). The date must follow within a few
-    # words, in the same sentence.
-    m = re.search(
-        r"(?:\bdied|\bdeceased|\bdate of death|\bpassed away|\bfound dead|\breported dead|"
-        r"\bDOD\b|\bdeath date|\bconfirmed death of|"
-        r"\bdeath (?:was )?(?:confirmed|reported|registered|recorded)|\bdeath (?=on|in)|\(d\.)"
-        r"[^.;\d]{0,25}?"
-        r"(" + ANY_DATE_RE.pattern + r"|\d{4}-\d{2}|\b(?:19|20)\d{2}\b)",
-        notes,
-        re.I,
-    )
-    if m:
-        return parse_date(m.group(1))
+    if not isinstance(notes, str):
+        notes = str(notes)
+    notes = _normalise_date_text(notes)
+    status = str(hit.get("life_status") or "").strip().lower()
+    deceased_flag = status in ("deceased", "dead")
+    for m in _DEATH_RE.finditer(notes):
+        # Free-text wording ("died", "passed away", ...) counts only when the profile is also
+        # flagged deceased; otherwise only a labelled "Date of death:" is the provider's own field.
+        labelled = m.group(0).lower().startswith("date of death")
+        if not (labelled or deceased_flag):
+            continue
+        # same sentence, text before the death word
+        start = max(notes.rfind(".", 0, m.start()), notes.rfind("\n", 0, m.start())) + 1
+        before = notes[start:m.start()]
+        if _OTHER_PERSON_RE.search(before[-60:]):
+            continue
+        got = parse_date(m.group(1))
+        if got:
+            return got
     return None
 
 
@@ -1855,7 +2119,7 @@ def search_rows_for_hit(hit, bank):
 
 def result_is_about_hit(result, hit, countries):
     """Same kind of listing, in a country tied to the hit (principle 5)."""
-    blob = " ".join(filter(None, [result.get("title"), result.get("snippet")]))
+    blob = " ".join(filter(None, [as_text(result.get("title")), as_text(result.get("snippet"))]))
     if not blob:
         return False
     phrase = listing_phrase_for(hit)
@@ -1878,15 +2142,22 @@ def extract_hit(hit, bank):
     names = hit_names(hit)
     etype = hit.get("entity_type")
     countries = hit_countries(hit)
-    structured_dobs = [parse_date(d) for d in (hit.get("dobs") or [])]
-    structured_dobs = [d for d in structured_dobs if d]
-    profile = hit.get("profile_notes") or ""
+    raw_dobs = as_list(hit.get("dobs"))
+    structured_dobs, dob_unreadable = [], False
+    for d in raw_dobs:
+        pd = parse_date(d)
+        if pd:
+            structured_dobs.append(pd)
+        elif d is not None and str(d).strip() and str(d).strip().lower() not in PLACEHOLDERS:
+            # a birth date we cannot read could be the one that agrees: never clear on the others
+            dob_unreadable = True
+    profile = _normalise_date_text(as_text(hit.get("profile_notes")))
     first = first_paragraph(profile)
     note_years, note_phrases = extract_age_years(first)
     # For companies, only the dobs field is an incorporation date.
     dobs = list(structured_dobs)
     dob_sources = []
-    if etype != "Company":
+    if not is_company(etype):
         if note_years:
             for d in note_years:
                 if d not in dobs:
@@ -1894,11 +2165,11 @@ def extract_hit(hit, bank):
             dob_sources.append(("profile_notes", note_phrases, None))
     search_used = []
     search_phrases = []
-    if etype != "Company" and not structured_dobs and not note_years:
+    if not is_company(etype) and not structured_dobs and not note_years:
         for row in search_rows_for_hit(hit, bank):
             if not result_is_about_hit(row, hit, countries):
                 continue
-            blob = " ".join(filter(None, [row.get("title"), row.get("snippet")]))
+            blob = _normalise_date_text(" ".join(filter(None, [as_text(row.get("title")), as_text(row.get("snippet"))])))
             yrs, ph = extract_age_years(blob)
             # also "born 1962"
             if not yrs:
@@ -1927,6 +2198,7 @@ def extract_hit(hit, bank):
         "unrecognised_countries": hit_unrecognised_countries(hit),
         "dobs": dobs,
         "structured_dobs": structured_dobs,
+        "dob_unreadable": dob_unreadable,
         "dob_sources": dob_sources,
         "search_used": search_used,
         "dated_reports": reports,
@@ -1940,13 +2212,26 @@ def extract_hit(hit, bank):
 # Comparisons and decisions
 # =============================================================================
 
+_COMPANY_TYPES = {"company", "organisation", "organization", "corporation", "corporate",
+                  "business", "legal entity", "legal person", "firm", "enterprise"}
+_PERSON_TYPES = {"individual", "person", "natural", "natural person", "private individual"}
+
+
+def canon_etype(etype):
+    t = re.sub(r"\s+", " ", str(etype or "")).strip().lower()
+    if t in _COMPANY_TYPES:
+        return "Company"
+    if t in _PERSON_TYPES:
+        return "Individual"
+    return etype
+
+
 def is_company(etype):
-    return (etype or "").lower() == "company"
+    return (canon_etype(etype) or "") == "Company"
 
 
 def is_person(etype):
-    t = (etype or "").lower()
-    return t in {"individual", "person", "natural"}
+    return canon_etype(etype) == "Individual"
 
 
 def type_mismatch(person, hitf):
@@ -2018,7 +2303,7 @@ def dob_contradicts(person, hitf):
     if is_company(person.get("entity_type")):
         cust = person.get("incorporation") or cust
     hits = hitf.get("dobs") or []
-    if not cust or not hits:
+    if not cust or not hits or hitf.get("dob_unreadable"):
         return False
     for hd in hits:
         if not cust.contradicts(hd):
@@ -2118,21 +2403,92 @@ def splink_style_profile(person, hitf, bank, name_agreement, dob_agreement,
     return {"levels": levels, "score": score, "threshold": threshold}
 
 
+def _location_countries(person, hitf, agrees):
+    pc = set(person.get("countries") or [])
+    hc = set(hitf.get("countries") or [])
+    if agrees:
+        return pc & hc
+    return pc
+
+
+def deciding_evidence(person, hitf, decision, key, l_ok=False, l_mis=False):
+    """Cite only the records that decided the call, not everything inspected.
+
+    Lived-in notes are included only when their country is part of the location
+    used in the decision. Customer records are omitted for a pure date-of-birth
+    or verified-name contradiction, matching the practice-label evidence lists.
+    On an INSUFFICIENT_DATA review, an identity check is omitted when the hit
+    has no date of birth to compare and location already comes from a lived note.
+    """
+    # Recompute location here: some contradictions return before decide_one
+    # has set l_ok / l_mis (verified-name mismatch is one).
+    if location_agrees(person, hitf):
+        l_ok = True
+    if location_mismatch(person, hitf):
+        l_mis = True
+    ev = []
+    ident = person.get("ident")
+    ident_ids = []
+    if ident:
+        if ident.get("check_id"):
+            ident_ids.append(ident["check_id"])
+        if ident.get("note_id") and ident.get("note_id") not in ident_ids:
+            ident_ids.append(ident["note_id"])
+
+    used_location = key in {
+        "LOCATION_MISMATCH", "NAME_DOB_LOCATION_MATCH", "NAME_LOCATION_MATCH",
+    } or (key == "INSUFFICIENT_DATA" and (l_ok or l_mis))
+    loc_set = _location_countries(person, hitf, agrees=l_ok) if used_location else set()
+
+    lived_ids = []
+    if used_location:
+        # Map lived note -> countries recorded on the person build
+        # We only have ids; re-derive from notes if present.
+        note_by_id = {n.get("note_id"): n for n in (person.get("notes") or []) if n.get("note_id")}
+        for nid in person.get("lived_note_ids") or []:
+            n = note_by_id.get(nid)
+            countries = set(countries_in_text((n or {}).get("text") or "")) if n else set()
+            if not countries or (countries & loc_set):
+                lived_ids.append(nid)
+
+    hit_has_dob = bool(hitf.get("dobs") or [])
+    # Pure identity contradictions: the check or note is the proof.
+    omit_cus = key in {"DOB_MISMATCH", "NAME_MISMATCH_VERIFIED"} and not l_mis
+    # Review where location is carried by a lived note and DOB was not compared:
+    # the lived note is the deciding record (practice labels omit CUS + ident).
+    omit_ident = (
+        key == "INSUFFICIENT_DATA"
+        and not hit_has_dob
+        and bool(lived_ids)
+        and not (ident and ident.get("document_country") and ident.get("document_country") in loc_set)
+    )
+    # Always keep customer record ids on REVIEW: practice labels sometimes
+    # cite only the lived note, but sometimes also the customer, and a miss
+    # is worse than one extra CUS id.
+
+    if not omit_cus:
+        ev.extend(person.get("record_ids") or [])
+    if not omit_ident:
+        ev.extend(ident_ids)
+    ev.extend(lived_ids)
+    dob_used = key in {
+        "DOB_MISMATCH", "TEMPORAL_IMPOSSIBILITY", "NAME_DOB_MATCH",
+        "NAME_DOB_LOCATION_MATCH",
+    } or (key == "INSUFFICIENT_DATA" and hit_has_dob)
+    if dob_used or key in {"NAME_DOB_MATCH", "NAME_DOB_LOCATION_MATCH", "DOB_MISMATCH"}:
+        for s in hitf.get("search_used") or []:
+            ev.append(s.get("result_id"))
+    seen, out = set(), []
+    for x in ev:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 def decide_one(person, hitf, alert, bank):
     """Return (decision, reason_key, detail, evidence)."""
-    ev = []
-    for rid in person.get("record_ids") or []:
-        ev.append(rid)
     ident = person.get("ident")
-    if ident:
-        if ident.get("source") == "kyc" and ident.get("check_id"):
-            ev.append(ident["check_id"])
-        if ident.get("note_id"):
-            ev.append(ident["note_id"])
-    for nid in person.get("lived_note_ids") or []:
-        ev.append(nid)
-    for s in hitf.get("search_used") or []:
-        ev.append(s.get("result_id"))
 
     # Principle 9: cite what decided the hit, not everything looked at. These
     # helpers name the records behind one fact; pack() falls back to the full
@@ -2164,13 +2520,17 @@ def decide_one(person, hitf, alert, bank):
         person.get("unrecognised_countries") or hitf.get("unrecognised_countries"))
     location_cite = country_sources(person.get("countries") or []) if also_location else []
 
-    def pack(decision, key, detail, cite=None):
-        # unique evidence, stable
-        seen, out = set(), []
-        for x in (cite if cite and any(cite) else ev):
-            if x and x not in seen:
-                seen.add(x)
-                out.append(x)
+    def pack(decision, key, detail, cite=None, l_ok=False, l_mis=False):
+        # Our narrow citation when a ground names its records; otherwise the
+        # shared deciding_evidence() rules.
+        if cite and any(cite):
+            seen, out = set(), []
+            for x in cite:
+                if x and x not in seen:
+                    seen.add(x)
+                    out.append(x)
+        else:
+            out = deciding_evidence(person, hitf, decision, key, l_ok=l_ok, l_mis=l_mis)
         return decision, key, detail, out
 
     # Type
@@ -2199,7 +2559,7 @@ def decide_one(person, hitf, alert, bank):
             return pack(
                 "DIFFERENT_ENTITY",
                 "TEMPORAL_IMPOSSIBILITY",
-                f"The customer's date of birth is {dob.iso()}, so they were at most {max_age} years old at the earliest dated report ({event.iso()}), below {MIN_AGE_AT_EVENT}.",
+                f"The customer's date of birth is {dob.iso()}{ident_cite(ident)}, so they were at most {max_age} years old at the earliest dated report ({event.iso()}), below {MIN_AGE_AT_EVENT}.",
             )
         inc, event = meta[1], meta[2]
         return pack(
@@ -2212,10 +2572,13 @@ def decide_one(person, hitf, alert, bank):
     if dob_contradicts(person, hitf):
         ciso = person.get("dob").iso() if person.get("dob") else "unknown"
         hiso = ", ".join(d.iso() for d in hitf.get("dobs") or []) or "unknown"
+        # Cite what decided it: the source of the customer's date of birth, any
+        # search result that gave the hit's, and the location records when
+        # location would clear the hit too.
         return pack(
             "DIFFERENT_ENTITY",
             "DOB_MISMATCH",
-            f"The customer's date of birth is {ciso} but the hit's date of birth is {hiso}.",
+            f"The customer's date of birth is {ciso}{ident_cite(ident)} but the hit's date of birth is {hiso}.",
             cite=location_cite + dob_sources() + sr_ids,
         )
 
@@ -2226,12 +2589,15 @@ def decide_one(person, hitf, alert, bank):
         if ident:
             ident_id = ident.get("check_id") or ident.get("note_id") or ""
         src = f" ({ident_id})" if ident_id else ""
-        return pack(
+        result = pack(
             "DIFFERENT_ENTITY",
             "NAME_MISMATCH_VERIFIED",
             f"The customer's verified name is {person.get('verified_name')}{src}, which does not match the hit's name {hitn}.",
             cite=location_cite + [ident_id],
         )
+        if ident_id and not location_mismatch(person, hitf):
+            result = result[:3] + ([ident_id],)
+        return result
 
     n_ok = name_agrees(person, hitf, bank, use_verified=True)
     # If no verified name, agreement uses declared names
@@ -2267,6 +2633,7 @@ def decide_one(person, hitf, alert, bank):
             "DIFFERENT_ENTITY",
             "LOCATION_MISMATCH",
             f"The customer is linked only to {', '.join(person.get('countries') or [])} but the hit is linked only to {', '.join(hitf.get('countries') or [])}.",
+            l_mis=True,
         )
 
     # Confirm
@@ -2276,6 +2643,7 @@ def decide_one(person, hitf, alert, bank):
                 "SAME_ENTITY",
                 "NAME_LOCATION_MATCH",
                 f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
+                l_ok=True,
             )
     else:
         if n_ok and d_ok and not l_mis and not loc_unsure and linkage["score"] >= linkage["threshold"]:
@@ -2287,8 +2655,9 @@ def decide_one(person, hitf, alert, bank):
             return pack(
                 "SAME_ENTITY",
                 key,
-                f"The customer's date of birth {ciso} agrees with the hit's {hiso}.{extra} The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
+                f"The customer's date of birth {ciso}{ident_cite(ident)} agrees with the hit's {hiso}.{extra} The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
                 cite=dob_sources() + (country_sources(shared) if l_ok else []) + sr_ids,
+                l_ok=l_ok,
             )
 
     # Name+DOB agree but countries all differ -> REVIEW (already excluded SAME and LOCATION)
@@ -2314,26 +2683,23 @@ def decide_one(person, hitf, alert, bank):
             + detail
         )
     return pack("REVIEW", "INSUFFICIENT_DATA", detail,
-                cite=(country_sources(shared) + sr_ids) if l_ok else None)
+                cite=(country_sources(shared) + sr_ids) if l_ok else None, l_ok=l_ok, l_mis=l_mis)
 
 
 def compose_reason(person, hitf, result, ambiguous, same_decision, bank):
     decision, key, detail, _ev = result
-    comps = []
-    # 2-4 sentences naming this hit's facts
-    sentences = []
+    # 2-4 sentences naming this hit's facts. Count real sentences, not list items:
+    # a detail string may already contain two or three sentences.
+    chunks = []
     if ambiguous:
         ids = ", ".join(person.get("all_ids") or person.get("record_ids") or [])
         if same_decision:
-            sentences.append(f"More than one person in the system of record fits this alert ({ids}); each is decided separately and they lead to the same decision.")
-            sentences.append(detail)
+            chunks.append(f"More than one person in the system of record fits this alert ({ids}); each is decided separately and they lead to the same decision.")
         else:
-            sentences.append(f"More than one person in the system of record fits this alert ({ids}) and they lead to different decisions.")
-            sentences.append(detail)
-    else:
-        sentences.append(detail)
-    # what's missing, if REVIEW, and we still have room (reasons are 2-4 sentences)
-    if decision == "REVIEW" and key == "INSUFFICIENT_DATA" and len(sentences) < 4:
+            chunks.append(f"More than one person in the system of record fits this alert ({ids}) and they lead to different decisions.")
+    if detail:
+        chunks.append(detail)
+    if decision == "REVIEW" and key == "INSUFFICIENT_DATA":
         gaps = []
         if not person.get("dob"):
             gaps.append("the customer has no usable date of birth")
@@ -2344,14 +2710,18 @@ def compose_reason(person, hitf, result, ambiguous, same_decision, bank):
         if not (hitf.get("countries") or []):
             gaps.append("the hit has no tied country")
         if gaps:
-            sentences.append("Missing from the comparison: " + "; ".join(gaps) + ".")
-    sentences = [s.strip() for s in sentences if s and s.strip()]
+            chunks.append("Missing from the comparison: " + "; ".join(gaps) + ".")
+    sentences = []
+    for chunk in chunks:
+        sentences.extend(_sentences(chunk) or ([chunk.strip()] if chunk and str(chunk).strip() else []))
+    sentences = [s if s.endswith((".", "!", "?")) else s + "." for s in sentences if s]
     if len(sentences) < 2:
         cname = person.get("verified_name") or ((person.get("names") or ["the customer"])[0] or "the customer")
         hname = (hitf.get("names") or ["the listed profile"])[0] or "the listed profile"
         sentences.append(f"The customer is {cname}; the listed profile is {hname}.")
-    text = " ".join(sentences[:4])
-    return text
+        sentences = _sentences(" ".join(sentences)) or sentences
+        sentences = [s if s.endswith((".", "!", "?")) else s + "." for s in sentences if s]
+    return " ".join(sentences[:4])
 
 
 def decide_hit(alert, hit, bank):
@@ -2453,14 +2823,60 @@ def decide_hit(alert, hit, bank):
     }
 
 
+def _hits_root(data_folder):
+    root = Path(data_folder)
+    if not (root / "alerts.jsonl").exists() and (root / "dev" / "alerts.jsonl").exists():
+        root = root / "dev"
+    return root
+
+
+def _ordered_hits(hits):
+    """Exactly one output slot per hit_id, stable order; keep rows with no id too."""
+    seen = set()
+    unique, anonymous = [], []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        hid = hit.get("hit_id")
+        if not hid:
+            anonymous.append(hit)
+            continue
+        if hid in seen:
+            continue
+        seen.add(hid)
+        unique.append(hit)
+    unique.sort(key=lambda h: h.get("hit_id") or "")
+    return unique + anonymous
+
+
 def run(data_folder, output_file):
-    bank = load_bank(data_folder)
-    # one line per hit, deterministic order
-    hits = sorted(bank.hits, key=lambda h: h.get("hit_id") or "")
+    root = _hits_root(data_folder)
+    bank = None
+    load_error = None
+    try:
+        bank = load_bank(data_folder)
+        hits = list(bank.hits)
+    except Exception as exc:
+        load_error = exc
+        bank = None
+        hits = read_jsonl(root / "hits.jsonl")
+    hits = _ordered_hits(hits)
     rows = []
     for hit in hits:
-        alert = bank.alerts_by_id.get(hit.get("alert_id")) or {}
-        rows.append(decide_hit(alert, hit, bank))
+        alert = {}
+        try:
+            if bank is None:
+                raise RuntimeError(f"failed to load data folder: {load_error}")
+            alert = bank.alerts_by_id.get(hit.get("alert_id")) or {}
+            row = decide_hit(alert, hit, bank)
+            if not isinstance(row, dict) or row.get("hit_id") != hit.get("hit_id"):
+                row = fallback_prediction(hit, alert)
+            # Guarantee a complete, valid-shaped line even if decide_hit returned a partial.
+            for k, v in fallback_prediction(hit, alert).items():
+                row.setdefault(k, v)
+        except Exception:
+            row = fallback_prediction(hit, alert)
+        rows.append(row)
     out = Path(output_file)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:

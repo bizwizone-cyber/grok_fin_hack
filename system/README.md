@@ -6,7 +6,7 @@
 system/run <data_folder> <output_file>
 ```
 
-A run on the development set (819 hits, ~250k supporting rows) takes about **16 seconds** on this machine and costs **$0**.
+A run on the development set (819 hits, ~250k supporting rows) takes about **15–20 seconds** on an Apple M5 laptop (up to about a minute on slower machines) and costs **$0**.
 
 ## Architecture
 

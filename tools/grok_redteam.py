@@ -352,7 +352,9 @@ def check(sysmod, cat, text, exp):
             return "WRONG", want, got
         return "missed", want, f"partly: {got}"
     if cat == "death":
-        got = sysmod.death_date({"profile_notes": text, "deceased_date": None})
+        # A profile that mentions the person's death is flagged deceased by the
+        # provider; system/run only trusts free-text death wording when it is.
+        got = sysmod.death_date({"profile_notes": text, "deceased_date": None, "life_status": "Deceased"})
         want = exp["death"].isoformat()
         if not got:
             return "missed", want, "no death date"
