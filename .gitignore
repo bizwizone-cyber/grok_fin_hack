@@ -1,5 +1,22 @@
+# Participant-only data — never commit
 dev/
 data/
 *.zip
 *.xlsx
+*.xls
+screening-track/
+
+# Secrets
 .env
+.env.*
+.openrouter_api_key
+openrouter.key
+OPENROUTER_API_KEY
+
+# Local / cache
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+fixture/

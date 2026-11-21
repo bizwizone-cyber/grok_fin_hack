@@ -1,0 +1,2120 @@
+#!/usr/bin/env python3
+"""Sanctions-screening entity resolution. Stdlib only. Deterministic. No model.
+
+Implements /data-folder/POLICY.md exactly. Usage:
+
+    system/run <data_folder> <output_file>
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+from datetime import date, timedelta
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Policy numbers (POLICY.md)
+# ---------------------------------------------------------------------------
+MIN_AGE_AT_EVENT = 16
+DOB_YEAR_TOLERANCE = 1
+
+PLACEHOLDERS = frozenset({
+    "na", "n/a", "n.a", "n.a.", "none", "null", "unknown", "unk", "test",
+    "tbd", "xxx", "xx", "xxxx", "none", "nil", "nill", "placeholder",
+    "not applicable", "notknown", "not_known",
+})
+NOT_COUNTRIES = frozenset({"international", "europe", "eu", "worldwide", "global"})
+
+MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+
+# Listing phrases (POLICY.md principle 5). Wording is the same in the unseen set.
+LISTING_PHRASE = {
+    "sanctions": "a sanctioned individual",
+    "pep": "a politically exposed person",
+    "enforcement": "the subject of enforcement action",
+    "adverse media": "named in adverse media",
+    "soe": "a state-owned enterprise official",
+}
+DEFAULT_LISTING_PHRASE = "named on a watchlist"
+
+# ISO2 / adjectives / aliases -> canonical English country name.
+# Territories stay their own country. Codes and nationalities are countries.
+COUNTRY_MAP = {}
+
+def _add_country(canon, *aliases):
+    COUNTRY_MAP[canon.lower()] = canon
+    for a in aliases:
+        COUNTRY_MAP[a.lower()] = canon
+
+_add_country("United Kingdom", "uk", "gb", "gbr", "great britain", "britain",
+             "england", "scotland", "wales", "northern ireland", "british")
+_add_country("United States", "us", "usa", "united states of america", "america",
+             "american", "u.s.", "u.s.a.")
+_add_country("Nigeria", "ng", "nga", "nigerian")
+_add_country("Germany", "de", "deu", "german")
+_add_country("Spain", "es", "esp", "spanish")
+_add_country("France", "fr", "fra", "french")
+_add_country("Italy", "it", "ita", "italian")
+_add_country("Bangladesh", "bd", "bgd", "bangladeshi")
+_add_country("Ireland", "ie", "irl", "irish", "republic of ireland")
+_add_country("Poland", "pl", "pol", "polish")
+_add_country("India", "in", "ind", "indian")
+_add_country("Canada", "ca", "can", "canadian")
+_add_country("Australia", "au", "aus", "australian")
+_add_country("Netherlands", "nl", "nld", "dutch", "holland")
+_add_country("Austria", "at", "aut", "austrian")
+_add_country("Kenya", "ke", "ken", "kenyan")
+_add_country("Singapore", "sg", "sgp", "singaporean")
+_add_country("South Africa", "za", "zaf", "south african")
+_add_country("Pakistan", "pk", "pak", "pakistani")
+_add_country("Ecuador", "ec", "ecu", "ecuadorian")
+_add_country("Sweden", "se", "swe", "swedish")
+_add_country("Thailand", "th", "tha", "thai")
+_add_country("Denmark", "dk", "dnk", "danish")
+_add_country("Switzerland", "ch", "che", "swiss")
+_add_country("Serbia", "rs", "srb", "serbian")
+_add_country("Brazil", "br", "bra", "brazilian")
+_add_country("Norway", "no", "nor", "norwegian")
+_add_country("Portugal", "pt", "prt", "portuguese")
+_add_country("Vietnam", "vn", "vnm", "viet nam", "vietnamese")
+_add_country("Haiti", "ht", "hti", "haitian")
+_add_country("Panama", "pa", "pan", "panamanian")
+_add_country("Montenegro", "me", "mne", "montenegrin")
+_add_country("Ghana", "gh", "gha", "ghanaian")
+_add_country("Syria", "sy", "syr", "syrian")
+_add_country("Russia", "ru", "rus", "russian federation", "russian")
+_add_country("North Korea", "kp", "prk", "dprk", "dpr korea", "korean, north")
+_add_country("South Korea", "kr", "kor", "korea", "republic of korea", "korean")
+_add_country("Armenia", "am", "arm", "armenian")
+_add_country("Czech Republic", "cz", "cze", "czechia", "czech")
+_add_country("New Zealand", "nz", "nzl", "kiwi")
+_add_country("Algeria", "dz", "dza", "algerian")
+_add_country("Morocco", "ma", "mar", "moroccan")
+_add_country("Jamaica", "jm", "jam", "jamaican")
+_add_country("Israel", "il", "isr", "israeli")
+_add_country("Lebanon", "lb", "lbn", "lebanese")
+_add_country("Romania", "ro", "rou", "romanian")
+_add_country("Slovenia", "si", "svn", "slovenian")
+_add_country("Moldova", "md", "mda", "moldovan")
+_add_country("Côte d'Ivoire", "ci", "civ", "cote d'ivoire", "cote divoire",
+             "ivory coast", "ivorian")
+_add_country("Mexico", "mx", "mex", "mexican")
+_add_country("Peru", "pe", "per", "peruvian")
+_add_country("Indonesia", "id", "idn", "indonesian")
+_add_country("Hungary", "hu", "hun", "hungarian")
+_add_country("United Arab Emirates", "ae", "are", "uae", "emirati")
+_add_country("China", "cn", "chn", "chinese", "prc")
+_add_country("Hong Kong", "hk", "hkg")
+_add_country("Taiwan", "tw", "twn")
+_add_country("Macau", "mo", "mac", "macao")
+_add_country("Japan", "jp", "jpn", "japanese")
+_add_country("Malaysia", "my", "mys", "malaysian")
+_add_country("Philippines", "ph", "phl", "filipino", "philippine")
+_add_country("Argentina", "ar", "arg", "argentine", "argentinian")
+_add_country("Chile", "cl", "chl", "chilean")
+_add_country("Colombia", "co", "col", "colombian")
+_add_country("Venezuela", "ve", "ven", "venezuelan")
+_add_country("Cuba", "cu", "cub", "cuban")
+_add_country("Egypt", "eg", "egy", "egyptian")
+_add_country("Libya", "ly", "lby", "libyan")
+_add_country("Sudan", "sd", "sdn", "sudanese")
+_add_country("South Sudan", "ss", "ssd")
+_add_country("Ethiopia", "et", "eth", "ethiopian")
+_add_country("Somalia", "so", "som", "somali")
+_add_country("Yemen", "ye", "yem", "yemeni")
+_add_country("Iran", "ir", "irn", "iranian")
+_add_country("Iraq", "iq", "irq", "iraqi")
+_add_country("Afghanistan", "af", "afg", "afghan")
+_add_country("Turkey", "tr", "tur", "turkiye", "turkish")
+_add_country("Cyprus", "cy", "cyp", "cypriot")
+_add_country("Malta", "mt", "mlt", "maltese")
+_add_country("Greece", "gr", "grc", "greek")
+_add_country("Belgium", "be", "bel", "belgian")
+_add_country("Luxembourg", "lu", "lux")
+_add_country("Finland", "fi", "fin", "finnish")
+_add_country("Iceland", "is", "isl", "icelandic")
+_add_country("Estonia", "ee", "est", "estonian")
+_add_country("Latvia", "lv", "lva", "latvian")
+_add_country("Lithuania", "lt", "ltu", "lithuanian")
+_add_country("Ukraine", "ua", "ukr", "ukrainian")
+_add_country("Belarus", "by", "blr", "belarusian")
+_add_country("Kazakhstan", "kz", "kaz", "kazakh")
+_add_country("Uzbekistan", "uz", "uzb", "uzbek")
+_add_country("Georgia", "ge", "geo", "georgian")
+_add_country("Azerbaijan", "az", "aze", "azerbaijani")
+_add_country("Saudi Arabia", "sa", "sau", "ksa", "saudi")
+_add_country("Qatar", "qa", "qat", "qatari")
+_add_country("Kuwait", "kw", "kwt", "kuwaiti")
+_add_country("Bahrain", "bh", "bhr", "bahraini")
+_add_country("Oman", "om", "omn", "omani")
+_add_country("Jordan", "jo", "jor", "jordanian")
+_add_country("Palestine", "ps", "pse", "palestinian")
+_add_country("Myanmar", "mm", "mmr", "burma", "burmese")
+_add_country("Sri Lanka", "lk", "lka", "sri lankan")
+_add_country("Nepal", "np", "npl", "nepali")
+_add_country("Cambodia", "kh", "khm", "cambodian")
+_add_country("Laos", "la", "lao", "laotian")
+_add_country("Mongolia", "mn", "mng", "mongolian")
+_add_country("Tanzania", "tz", "tza", "tanzanian")
+_add_country("Uganda", "ug", "uga", "ugandan")
+_add_country("Zimbabwe", "zw", "zwe", "zimbabwean")
+_add_country("Zambia", "zm", "zmb", "zambian")
+_add_country("Mozambique", "mz", "moz", "mozambican")
+_add_country("Angola", "ao", "ago", "angolan")
+_add_country("Cameroon", "cm", "cmr", "cameroonian")
+_add_country("Senegal", "sn", "sen", "senegalese")
+_add_country("Mali", "ml", "mli")
+_add_country("Tunisia", "tn", "tun", "tunisian")
+_add_country("Bulgaria", "bg", "bgr", "bulgarian")
+_add_country("Croatia", "hr", "hrv", "croatian")
+_add_country("Slovakia", "sk", "svk", "slovak")
+_add_country("Bosnia and Herzegovina", "ba", "bih", "bosnia", "bosnian")
+_add_country("North Macedonia", "mk", "mkd", "macedonia", "macedonian")
+_add_country("Albania", "al", "alb", "albanian")
+_add_country("Kosovo", "xk", "kosovan")
+_add_country("Puerto Rico", "pr", "pri")
+_add_country("Northern Mariana Islands", "mp", "mnp")
+_add_country("Guam", "gu", "gum")
+_add_country("Virgin Islands, U.S.", "vi", "vir", "us virgin islands")
+_add_country("Bermuda", "bm", "bmu")
+_add_country("Cayman Islands", "ky", "cym")
+_add_country("Isle of Man", "im", "imn")
+_add_country("Jersey", "je", "jey")
+_add_country("Guernsey", "gg", "ggy")
+_add_country("Gibraltar", "gi", "gib")
+_add_country("Taiwan", "tw", "twn", "chinese taipei")
+_add_country("Vatican City", "va", "vat", "holy see")
+_add_country("Monaco", "mc", "mco")
+_add_country("Liechtenstein", "li", "lie")
+_add_country("Andorra", "ad", "and")
+_add_country("San Marino", "sm", "smr")
+_add_country("Uruguay", "uy", "ury", "uruguayan")
+_add_country("Paraguay", "py", "pry", "paraguayan")
+_add_country("Bolivia", "bo", "bol", "bolivian")
+_add_country("Costa Rica", "cr", "cri")
+_add_country("Panama", "pa", "pan")
+_add_country("Guatemala", "gt", "gtm", "guatemalan")
+_add_country("Honduras", "hn", "hnd")
+_add_country("El Salvador", "sv", "slv")
+_add_country("Nicaragua", "ni", "nic")
+_add_country("Dominican Republic", "do", "dom")
+_add_country("Trinidad and Tobago", "tt", "tto")
+_add_country("Barbados", "bb", "brb")
+_add_country("Bahamas", "bs", "bhs")
+_add_country("Latvia", "lv", "lva")
+_add_country("Estonia", "ee", "est")
+_add_country("Belize", "bz", "blz")
+_add_country("Guyana", "gy", "guy")
+_add_country("Suriname", "sr", "sur")
+_add_country("Libya", "ly", "lby")
+_add_country("Mauritius", "mu", "mus")
+_add_country("Madagascar", "mg", "mdg")
+_add_country("Rwanda", "rw", "rwa", "rwandan")
+_add_country("Burundi", "bi", "bdi")
+_add_country("Malawi", "mw", "mwi")
+_add_country("Botswana", "bw", "bwa")
+_add_country("Namibia", "na", "nam", "namibian")
+_add_country("Sierra Leone", "sl", "sle")
+_add_country("Liberia", "lr", "lbr")
+_add_country("Gambia", "gm", "gmb")
+_add_country("Guinea", "gn", "gin")
+_add_country("Benin", "bj", "ben")
+_add_country("Togo", "tg", "tgo")
+_add_country("Burkina Faso", "bf", "bfa")
+_add_country("Niger", "ne", "ner")
+_add_country("Chad", "td", "tcd")
+_add_country("Central African Republic", "cf", "caf")
+_add_country("Congo", "cg", "cog")
+_add_country("Democratic Republic of the Congo", "cd", "cod", "drc", "congo-kinshasa")
+_add_country("Gabon", "ga", "gab")
+_add_country("Equatorial Guinea", "gq", "gnq")
+_add_country("Eritrea", "er", "eri")
+_add_country("Djibouti", "dj", "dji")
+_add_country("Sudan", "sd", "sdn")
+_add_country("Mozambique", "mz", "moz")
+_add_country("Lesotho", "ls", "lso")
+_add_country("Eswatini", "sz", "swz", "swaziland")
+_add_country("Fiji", "fj", "fji")
+_add_country("Papua New Guinea", "pg", "png")
+_add_country("Solomon Islands", "sb", "slb")
+_add_country("Vanuatu", "vu", "vut")
+_add_country("Samoa", "ws", "wsm")
+_add_country("Tonga", "to", "ton")
+_add_country("Brunei", "bn", "brn")
+_add_country("Maldives", "mv", "mdv")
+_add_country("Bhutan", "bt", "btn")
+_add_country("Turkmenistan", "tm", "tkm")
+_add_country("Kyrgyzstan", "kg", "kgz")
+_add_country("Tajikistan", "tj", "tjk")
+_add_country("Palestine", "ps", "pse")
+
+# Longer names first when scanning free text.
+_COUNTRY_SCAN = tuple(sorted(
+    ((k, v) for k, v in COUNTRY_MAP.items() if len(k) >= 4 and not k.isalpha() or len(k) >= 5 or " " in k or "'" in k or k in {
+        "spain", "france", "italy", "china", "india", "japan", "brazil", "ghana",
+        "kenya", "sudan", "syria", "yemen", "egypt", "haiti", "malta", "peru",
+        "chile", "nepal", "qatar", "oman", "togo", "mali", "chad", "fiji", "cuba",
+        "iran", "iraq", "laos", "fiji", "tonga", "samoa", "benin", "niger",
+        "gabon", "libya", "nigeria", "germany", "ireland", "poland", "canada",
+        "mexico", "sweden", "norway", "denmark", "austria", "greece", "turkey",
+        "cyprus", "serbia", "panama", "jordan", "kuwait", "bahrain", "lebanon",
+        "morocco", "algeria", "tunisia", "senegal", "uganda", "zambia", "angola",
+        "rwanda", "malawi", "namibia", "liberia", "guinea", "gambia", "eritrea",
+        "djibouti", "burundi", "lesotho", "vanuatu", "brunei", "bhutan", "moldova",
+        "albania", "kosovo", "belarus", "ukraine", "georgia", "armenia", "romania",
+        "bulgaria", "croatia", "slovakia", "slovenia", "hungary", "finland",
+        "iceland", "estonia", "latvia", "lithuania", "portugal", "belgium",
+        "pakistan", "thailand", "vietnam", "malaysia", "myanmar", "cambodia",
+        "mongolia", "ethiopia", "tanzania", "somalia", "zimbabwe", "cameroon",
+        "colombia", "ecuador", "bolivia", "paraguay", "uruguay", "honduras",
+        "nicaragua", "guatemala", "barbados", "bahamas", "jamaica", "suriname",
+        "guyana", "belize", "andorra", "monaco", "gibraltar", "bermuda", "guam",
+        "taiwan", "israel", "russia", "mexico", "singapore",
+    }),
+    key=lambda kv: -len(kv[0]),
+))
+# Simpler: all aliases length >= 4 except iso-looking
+_COUNTRY_SCAN = tuple(sorted(
+    ((k, v) for k, v in COUNTRY_MAP.items() if len(k) >= 4),
+    key=lambda kv: -len(kv[0]),
+))
+
+# =============================================================================
+# Dates
+# =============================================================================
+
+class PDate:
+    """Partial date: year required for truthiness; month/day optional."""
+    __slots__ = ("year", "month", "day")
+
+    def __init__(self, year, month=None, day=None):
+        self.year = int(year) if year else None
+        self.month = int(month) if month else None
+        self.day = int(day) if day else None
+        if self.month is not None and not (1 <= self.month <= 12):
+            self.month, self.day = None, None
+        if self.day is not None and not (1 <= self.day <= 31):
+            self.day = None
+
+    def __bool__(self):
+        return self.year is not None
+
+    def __eq__(self, other):
+        return isinstance(other, PDate) and (self.year, self.month, self.day) == (other.year, other.month, other.day)
+
+    def __hash__(self):
+        return hash((self.year, self.month, self.day))
+
+    def iso(self):
+        if not self:
+            return None
+        if self.month is None:
+            return f"{self.year:04d}"
+        if self.day is None:
+            return f"{self.year:04d}-{self.month:02d}"
+        return f"{self.year:04d}-{self.month:02d}-{self.day:02d}"
+
+    def date_min(self):
+        if not self:
+            return None
+        return date(self.year, self.month or 1, self.day or 1)
+
+    def date_max(self):
+        if not self:
+            return None
+        if self.month is None:
+            return date(self.year, 12, 31)
+        if self.day is None:
+            if self.month == 12:
+                return date(self.year, 12, 31)
+            return date(self.year, self.month + 1, 1) - timedelta(days=1)
+        try:
+            return date(self.year, self.month, self.day)
+        except ValueError:
+            return date(self.year, self.month, 1)
+
+    def has_full(self):
+        return bool(self.year and self.month and self.day)
+
+    def equal_known(self, other):
+        """True when every part both give is equal (principle 2 / 7)."""
+        if not self or not other:
+            return False
+        if self.year != other.year:
+            return False
+        if self.month and other.month and self.month != other.month:
+            return False
+        if self.day and other.day and self.day != other.day:
+            return False
+        return True
+
+    def contradicts(self, other, year_tol=DOB_YEAR_TOLERANCE):
+        """POLICY: year more than 1 outside, or same year with different month/day."""
+        if not self or not other:
+            return False
+        if abs(self.year - other.year) > year_tol:
+            return True
+        if self.year == other.year and self.month and other.month:
+            if self.month != other.month:
+                return True
+            if self.day and other.day and self.day != other.day:
+                return True
+        return False
+
+    def agrees(self, other):
+        """Year is one of the hit years and every shared part is equal."""
+        return self.equal_known(other)
+
+
+def parse_date(val):
+    if val is None or val == "":
+        return None
+    if isinstance(val, PDate):
+        return val if val else None
+    if isinstance(val, date):
+        return PDate(val.year, val.month, val.day)
+    if isinstance(val, (int, float)):
+        y = int(val)
+        return PDate(y) if 1800 <= y <= 2100 else None
+    text = str(val).strip()
+    if not text or text.lower() in PLACEHOLDERS:
+        return None
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if m:
+        return PDate(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})", text)
+    if m:
+        return PDate(int(m.group(1)), int(m.group(2)))
+    m = re.fullmatch(r"(\d{4})", text)
+    if m:
+        y = int(m.group(1))
+        return PDate(y) if 1800 <= y <= 2100 else None
+    # DD/MM/YYYY (UK bank: prefer DMY when ambiguous)
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if a > 12:
+            return PDate(y, b, a)
+        if b > 12:
+            return PDate(y, a, b)
+        return PDate(y, b, a)  # DMY
+    # Month-name forms
+    m = re.fullmatch(
+        r"(?:(\d{1,2})\s+)?([A-Za-z]{3,9})\.?(?:\s+(\d{1,2}))?,?\s+(\d{4})",
+        text,
+    )
+    if m:
+        mon = MONTHS.get(m.group(2).lower())
+        y = int(m.group(4))
+        if mon and 1800 <= y <= 2100:
+            day = m.group(1) or m.group(3)
+            return PDate(y, mon, int(day) if day else None)
+    # loose search inside a longer string
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+    if m:
+        return parse_date(m.group(1))
+    m = re.search(
+        r"(?:(\d{1,2})\s+)?([A-Za-z]{3,9})\.?(?:\s+(\d{1,2}))?,?\s+(\d{4})",
+        text,
+    )
+    if m and MONTHS.get((m.group(2) or "").lower()):
+        return parse_date(m.group(0))
+    return None
+
+
+# =============================================================================
+# Text / country helpers
+# =============================================================================
+
+def strip_accents(text):
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+
+
+def norm_space(text):
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def country_of(val):
+    """Map a code, adjective, or name to a canonical country; None if not a country."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, (list, tuple)):
+        # shouldn't happen at this layer
+        return None
+    text = strip_accents(str(val)).strip()
+    text = re.sub(r"\[.*?\]", "", text).strip(" ,;.")
+    if not text:
+        return None
+    low = re.sub(r"\s+", " ", text.lower())
+    if low in NOT_COUNTRIES or low in PLACEHOLDERS:
+        return None
+    if low in COUNTRY_MAP:
+        return COUNTRY_MAP[low]
+    # "Sassari, Sassari, Italy" / "American" already handled; try last comma part
+    if "," in text:
+        for part in reversed([p.strip() for p in text.split(",")]):
+            c = country_of(part)
+            if c:
+                return c
+    # trailing "the United States"
+    if low.startswith("the ") and low[4:] in COUNTRY_MAP:
+        return COUNTRY_MAP[low[4:]]
+    return None
+
+
+def countries_from_values(values):
+    out, seen = [], set()
+    for val in values:
+        if val is None or val == "":
+            continue
+        if isinstance(val, (list, tuple)):
+            for item in val:
+                c = country_of(item) if not (isinstance(item, str) and "," in item) else (
+                    country_of(item)
+                )
+                if c and c not in seen:
+                    seen.add(c)
+                    out.append(c)
+            continue
+        c = country_of(val)
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def countries_in_text(text):
+    """Find canonical countries mentioned in free text (longest aliases first)."""
+    if not text:
+        return []
+    low = " " + re.sub(r"\s+", " ", strip_accents(text).lower()) + " "
+    found, seen = [], set()
+    for alias, canon in _COUNTRY_SCAN:
+        # word-boundary-ish
+        pat = " " + alias + " "
+        # also allow "in Nigeria." etc — punctuation already not in alias
+        if pat in low or (" " + alias + ",") in low or (" " + alias + ".") in low or (" " + alias + ";") in low:
+            if canon not in seen:
+                seen.add(canon)
+                found.append(canon)
+    return found
+
+
+def last_address_country(addr):
+    if not addr:
+        return None
+    text = re.sub(r"\[.*?\]", "", str(addr)).strip(" ,;.")
+    if not text:
+        return None
+    # last comma-separated token, skipping postcodes
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    for part in reversed(parts):
+        c = country_of(part)
+        if c:
+            return c
+        # "A1C 1K4" etc
+        if re.fullmatch(r"[A-Z0-9][A-Z0-9 ]{1,8}", part, re.I):
+            continue
+    return country_of(text)
+
+
+def normalise_phone(val):
+    if not val:
+        return ""
+    return re.sub(r"[^\d+]", "", str(val))
+
+
+def normalise_docno(val):
+    if not val:
+        return ""
+    return re.sub(r"\s+", "", str(val)).upper()
+
+
+# =============================================================================
+# Names — POLICY.md principle 8
+# =============================================================================
+
+def levenshtein(a, b):
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            curr.append(min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + (ca != cb)))
+        prev = curr
+    return prev[-1]
+
+
+def is_placeholder_token(tok):
+    if not tok:
+        return True
+    if tok in PLACEHOLDERS:
+        return True
+    # digits and the like
+    if re.fullmatch(r"\d+", tok):
+        return True
+    if re.fullmatch(r"[x]+", tok):
+        return True
+    return False
+
+
+class NameSystem:
+    def __init__(self, groups, legal_forms):
+        # part -> list of group ids it belongs to (not transitive across groups)
+        self.group_ids = defaultdict(set)
+        for i, group in enumerate(groups or []):
+            for member in group:
+                tok = self._raw_token(member)
+                if tok:
+                    self.group_ids[tok].add(i)
+        self.legal_forms = set()
+        for form in legal_forms or []:
+            tok = self._raw_token(form)
+            if tok:
+                self.legal_forms.add(tok)
+
+    @staticmethod
+    def _raw_token(text):
+        t = strip_accents(str(text)).lower()
+        t = re.sub(r"[^\w]+", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+
+    def parts(self, name, company=False):
+        """Distinct real name parts, initials and placeholders dropped."""
+        if not name:
+            return []
+        text = str(name)
+        text = re.sub(r"\([^)]*\)", " ", text)
+        text = re.sub(r"\[[^\]]*\]", " ", text)
+        text = strip_accents(text).lower()
+        text = text.replace("&", " and ")
+        text = re.sub(r"[^\w\s]", " ", text)
+        raw = [t for t in text.split() if t]
+        out, seen = [], set()
+        for t in raw:
+            if len(t) == 1:  # initial, not a part
+                continue
+            if is_placeholder_token(t):
+                continue
+            if company and t in self.legal_forms:
+                continue
+            if t in seen:
+                continue
+            seen.add(t)
+            out.append(t)
+        return out
+
+    def parts_match(self, a, b):
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        ga, gb = self.group_ids.get(a), self.group_ids.get(b)
+        if ga and gb and (ga & gb):
+            return True
+        # typo: shorter length decides; <4 must be identical; 4-6: 1 edit; else 2
+        shorter = a if len(a) <= len(b) else b
+        n = len(shorter)
+        if n < 4:
+            return False
+        allowed = 1 if n <= 6 else 2
+        return levenshtein(a, b) <= allowed
+
+    def names_agree(self, name_a, name_b, company=False):
+        """At least two parts match, or every part of the shorter name matches.
+
+        Together/apart: Abdulsalam matches Abdul Salam, one part covering both.
+        """
+        pa = self.parts(name_a, company=company)
+        pb = self.parts(name_b, company=company)
+        if not pa or not pb:
+            return False
+        matched = self._match_count(pa, pb)
+        if matched >= 2:
+            return True
+        shorter = pa if len(pa) <= len(pb) else pb
+        # "every part of the shorter name matches"
+        return matched >= len(shorter) and matched >= 1
+
+    def _match_count(self, pa, pb):
+        """Greedy alignment, including concatenated adjacent parts."""
+        used = [False] * len(pb)
+        n = 0
+        i = 0
+        while i < len(pa):
+            found = False
+            # prefer two-to-one / one-to-two before single, longest first
+            # one part of A equals two adjacent of B
+            if i < len(pa):
+                for j in range(len(pb) - 1):
+                    if used[j] or used[j + 1]:
+                        continue
+                    if self.parts_match(pa[i], pb[j] + pb[j + 1]) or pa[i] == pb[j] + pb[j + 1]:
+                        used[j] = used[j + 1] = True
+                        n += 1  # one part covering both
+                        found = True
+                        break
+            if found:
+                i += 1
+                continue
+            # two adjacent of A equal one of B
+            if i < len(pa) - 1:
+                concat = pa[i] + pa[i + 1]
+                for j, u in enumerate(pb):
+                    if used[j]:
+                        continue
+                    if self.parts_match(concat, u) or concat == u:
+                        used[j] = True
+                        n += 1
+                        found = True
+                        i += 2
+                        break
+                if found:
+                    continue
+            for j, u in enumerate(pb):
+                if used[j]:
+                    continue
+                if self.parts_match(pa[i], u):
+                    used[j] = True
+                    n += 1
+                    found = True
+                    break
+            i += 1
+        return n
+
+    def any_agree(self, names_a, names_b, company=False):
+        for a in names_a:
+            for b in names_b:
+                if self.names_agree(a, b, company=company):
+                    return True
+        return False
+
+
+# Jaro-Winkler is logged only, never used in a decision (POLICY.md principle 8).
+def jaro(s1, s2):
+    if s1 == s2:
+        return 1.0
+    if not s1 or not s2:
+        return 0.0
+    len1, len2 = len(s1), len(s2)
+    window = max(0, max(len1, len2) // 2 - 1)
+    m1, m2 = [False] * len1, [False] * len2
+    matches = 0
+    for i, ch in enumerate(s1):
+        start, end = max(0, i - window), min(i + window + 1, len2)
+        for j in range(start, end):
+            if m2[j] or ch != s2[j]:
+                continue
+            m1[i] = m2[j] = True
+            matches += 1
+            break
+    if matches == 0:
+        return 0.0
+    t = k = 0
+    for i in range(len1):
+        if not m1[i]:
+            continue
+        while not m2[k]:
+            k += 1
+        if s1[i] != s2[k]:
+            t += 1
+        k += 1
+    return (matches / len1 + matches / len2 + (matches - t / 2) / matches) / 3.0
+
+
+def jaro_winkler(s1, s2):
+    j = jaro(s1, s2)
+    pref = 0
+    for a, b in zip(s1, s2):
+        if a != b or pref >= 4:
+            break
+        pref += 1
+    return j + pref * 0.1 * (1.0 - j)
+
+
+def jw_best(names_a, names_b, ns):
+    best = 0.0
+    for a in names_a:
+        pa = " ".join(ns.parts(a, company=False) or [strip_accents(str(a)).lower()])
+        sa = " ".join(sorted((ns.parts(a) or [pa])))
+        for b in names_b:
+            pb = " ".join(ns.parts(b, company=False) or [strip_accents(str(b)).lower()])
+            sb = " ".join(sorted((ns.parts(b) or [pb])))
+            best = max(best, jaro_winkler(pa, pb), jaro_winkler(sa, sb))
+    return best
+
+# =============================================================================
+# IO
+# =============================================================================
+
+def read_jsonl(path):
+    rows = []
+    path = Path(path)
+    if not path.exists():
+        return rows
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def read_json(path):
+    path = Path(path)
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+# =============================================================================
+# KYC-in-notes and lived-in countries
+# =============================================================================
+
+KYC_SUCCESS_RE = re.compile(
+    r"\b(?:verified|validated|confirmed|successfully|successful|cleared|completed|processed|"
+    r"check complete|identity verification)\b",
+    re.I,
+)
+KYC_FAIL_RE = re.compile(r"\b(?:rejected|failed|expired|declined|unsuccessful)\b", re.I)
+LIVED_RE = re.compile(
+    r"\b(?:liv(?:ed|ing)|residenc(?:y|e)|resid(?:ed|ing)|worked|working|"
+    r"employ(?:ed|ment)|based in|household|home and|job in)\b",
+    re.I,
+)
+
+# ALL-CAPS name of 2+ tokens
+CAPS_NAME_RE = re.compile(
+    r"\b([A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ]{2,}(?:(?:\s+|\s*,\s*)[A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ][A-ZÁÉÍÓÚÜÑÇÄÖÅÆØ'.-]*){1,5})\b"
+)
+DOB_LABEL_RE = re.compile(
+    r"(?:DOB|date of birth|birth date|born)\s*(?:on document\s*)?(?:is\s*|of\s*|:?\s*)"
+    r"(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|"
+    r"(?:(?:\d{1,2}\s+)?(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\.?(?:\s+\d{1,2})?,?\s+\d{4}))",
+    re.I,
+)
+PAREN_DOB_RE = re.compile(
+    r"\((\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2}|"
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+    r"\s+\d{1,2},\s+\d{4})\)",
+    re.I,
+)
+DOC_COUNTRY_RE = re.compile(
+    r"(?:from(?: the)?|issued in|originating from(?: the)?|passport(?: from(?: the)?)?|"
+    r"national ID(?: from(?: the)?)?|driving licence(?: from(?: the)?)?|"
+    r"documentation is from(?: the)?|for(?: the)?)\s+"
+    r"([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,3})",
+    re.I,
+)
+
+
+def parse_kyc_note(note):
+    """Return dict or None for an approved identity check written only in a note."""
+    text = note.get("text") or ""
+    if not text or not KYC_SUCCESS_RE.search(text) or KYC_FAIL_RE.search(text):
+        return None
+    dob = None
+    m = DOB_LABEL_RE.search(text)
+    if m:
+        dob = parse_date(m.group(1))
+    if not dob:
+        m = PAREN_DOB_RE.search(text)
+        if m:
+            dob = parse_date(m.group(1))
+    name = None
+    # Prefer a caps name near DOB / verification words
+    caps = list(CAPS_NAME_RE.finditer(text))
+    skip = {
+        "DOB", "ID", "THE", "FOR", "AND", "FROM", "USING", "WITH", "DATE", "BIRTH",
+        "NATIONAL", "PASSPORT", "DRIVING", "LICENCE", "LICENSE", "DOCUMENT",
+        "PERSONA", "SUMSUB", "ONFIDO", "VERIFF", "UNITED", "STATES", "KINGDOM",
+    }
+    for m in caps:
+        cand = m.group(1).strip(" ,")
+        toks = [t for t in re.split(r"[\s,]+", cand) if t]
+        if len(toks) < 2:
+            continue
+        if all(t.upper() in skip or country_of(t) for t in toks):
+            continue
+        name = re.sub(r"[,;]\s*(?:DOB|D\.O\.B\.?|born|birth).*", "", cand, flags=re.I).strip(" ,;")
+        if len(re.split(r"[\s,]+", name)) >= 2:
+            break
+        name = None
+    # document country
+    doc_country = None
+    # try explicit phrases first
+    for m in DOC_COUNTRY_RE.finditer(text):
+        c = country_of(m.group(1))
+        if c:
+            doc_country = c
+            break
+    if not doc_country:
+        cs = countries_in_text(text)
+        if len(cs) == 1:
+            doc_country = cs[0]
+    checked = parse_date(note.get("created_at"))
+    m = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", text)
+    if m:
+        checked = parse_date(m.group(1)) or checked
+    if not name and not dob:
+        return None
+    return {
+        "source": "note",
+        "note_id": note.get("note_id"),
+        "check_id": note.get("note_id"),
+        "verified_name": name,
+        "verified_dob": dob,
+        "document_country": doc_country,
+        "document_number": None,
+        "checked_at": checked,
+        "result": "approved",
+    }
+
+
+# =============================================================================
+# Bank indexes
+# =============================================================================
+
+class Bank:
+    pass
+
+
+def load_bank(data_folder):
+    root = Path(data_folder)
+    # Accept either the folder itself (alerts.jsonl next to POLICY.md)
+    # or a parent that contains dev/.
+    if not (root / "alerts.jsonl").exists() and (root / "dev" / "alerts.jsonl").exists():
+        root = root / "dev"
+    b = Bank()
+    b.root = root
+    b.alerts = read_jsonl(root / "alerts.jsonl")
+    b.hits = read_jsonl(root / "hits.jsonl")
+    b.customers = read_jsonl(root / "customers.jsonl")
+    b.accounts = read_jsonl(root / "accounts.jsonl")
+    b.onboarding = read_jsonl(root / "onboarding.jsonl")
+    b.kyc_checks = read_jsonl(root / "kyc_checks.jsonl")
+    b.notes = read_jsonl(root / "notes.jsonl")
+    b.search_results = read_jsonl(root / "search_results.jsonl")
+    variants = read_json(root / "name_variants.json") or {}
+    b.ns = NameSystem(variants.get("groups") or [], variants.get("company_legal_forms") or [])
+
+    b.alerts_by_id = {a["alert_id"]: a for a in b.alerts}
+    b.hits_by_id = {h["hit_id"]: h for h in b.hits}
+    b.customers_by_id = {c["record_id"]: c for c in b.customers}
+
+    b.accounts_by_id = defaultdict(list)
+    b.accounts_by_login = defaultdict(list)
+    b.accounts_by_customer = defaultdict(list)
+    for a in b.accounts:
+        b.accounts_by_id[a["account_id"]].append(a)
+        if a.get("login_handle"):
+            b.accounts_by_login[a["login_handle"]].append(a)
+            b.accounts_by_login[str(a["login_handle"]).lower()].append(a)
+        b.accounts_by_customer[a["customer_id"]].append(a)
+
+    b.onboarding_by_account = defaultdict(list)
+    b.onboarding_by_customer = defaultdict(list)
+    b.onboarding_by_applicant = defaultdict(list)
+    for o in b.onboarding:
+        b.onboarding_by_account[o["account_id"]].append(o)
+        b.onboarding_by_customer[o["customer_id"]].append(o)
+        b.onboarding_by_applicant[o["kyc_applicant_id"]].append(o)
+
+    b.kyc_by_applicant = defaultdict(list)
+    b.kyc_approved_by_doc = defaultdict(list)
+    for k in b.kyc_checks:
+        b.kyc_by_applicant[k["applicant_id"]].append(k)
+        if (k.get("result") or "").lower() == "approved":
+            doc = normalise_docno(k.get("document_number"))
+            if doc:
+                b.kyc_approved_by_doc[doc].append(k)
+
+    b.customers_by_email = defaultdict(list)
+    b.customers_by_phone = defaultdict(list)
+    for c in b.customers:
+        if c.get("email"):
+            b.customers_by_email[c["email"].lower()].append(c)
+        ph = normalise_phone(c.get("phone"))
+        if ph:
+            b.customers_by_phone[ph].append(c)
+
+    b.notes_by_email = defaultdict(list)
+    for n in b.notes:
+        em = (n.get("requester_email") or "").lower()
+        if em:
+            b.notes_by_email[em].append(n)
+
+    b.search_by_query = defaultdict(list)
+    b.search_by_sorted = defaultdict(list)
+    for s in b.search_results:
+        q = strip_accents(s.get("query") or "").lower()
+        q = re.sub(r"[^\w\s]", " ", q)
+        q = re.sub(r"\s+", " ", q).strip()
+        if q:
+            b.search_by_query[q].append(s)
+            key = " ".join(sorted(q.split()))
+            b.search_by_sorted[key].append(s)
+
+    # Global same-person clusters (principle 3), union-find
+    parent = {c["record_id"]: c["record_id"] for c in b.customers}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            if ra < rb:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    # phone AND same full DOB
+    # group customers by (phone, full iso dob)
+    by_phone_dob = defaultdict(list)
+    for c in b.customers:
+        ph = normalise_phone(c.get("phone"))
+        dob = parse_date(c.get("dob"))
+        if ph and dob and dob.has_full():
+            by_phone_dob[(ph, dob.iso())].append(c["record_id"])
+    for ids in by_phone_dob.values():
+        for other in ids[1:]:
+            union(ids[0], other)
+
+    # same document number on approved checks, transitively via their customers
+    def customers_for_check(k):
+        ids = []
+        for o in b.onboarding_by_applicant.get(k["applicant_id"], []):
+            ids.append(o["customer_id"])
+        return ids
+
+    for doc, checks in b.kyc_approved_by_doc.items():
+        recs = []
+        for k in checks:
+            recs.extend(customers_for_check(k))
+        recs = [r for r in recs if r in parent]
+        if len(recs) >= 2:
+            for other in recs[1:]:
+                union(recs[0], other)
+
+    # freeze
+    clusters = defaultdict(list)
+    for cid in parent:
+        clusters[find(cid)].append(cid)
+    b.cluster_of = {cid: find(cid) for cid in parent}
+    b.cluster_members = {k: sorted(v) for k, v in clusters.items()}
+
+    # approved kyc (provider) per customer
+    b.approved_kyc_for = defaultdict(list)
+    for o in b.onboarding:
+        for k in b.kyc_by_applicant.get(o["kyc_applicant_id"], []):
+            if (k.get("result") or "").lower() == "approved":
+                b.approved_kyc_for[o["customer_id"]].append(k)
+
+    # dob index for unlinked search
+    b.by_dob_year = defaultdict(list)
+    b.by_country = defaultdict(list)
+    for c in b.customers:
+        dob = parse_date(c.get("dob"))
+        if dob:
+            b.by_dob_year[dob.year].append(c)
+        for ctry in customer_declared_countries(c):
+            b.by_country[ctry].append(c)
+    return b
+
+
+def customer_declared_countries(c):
+    return countries_from_values([c.get("residence_country"), c.get("nationality")])
+
+
+def customer_names(c):
+    names = []
+    for k in ("full_name", "preferred_name", "login_name"):
+        v = c.get(k)
+        if v and v not in names:
+            names.append(v)
+    return names
+
+
+# =============================================================================
+# Customer resolution
+# =============================================================================
+
+def notes_for_records(bank, records):
+    notes, seen = [], set()
+    for c in records:
+        em = (c.get("email") or "").lower()
+        if not em:
+            continue
+        for n in bank.notes_by_email.get(em, []):
+            nid = n.get("note_id")
+            if nid in seen:
+                continue
+            seen.add(nid)
+            notes.append(n)
+    notes.sort(key=lambda n: n.get("note_id") or "")
+    return notes
+
+
+def lived_countries(notes):
+    found, seen = [], set()
+    for n in notes:
+        if (n.get("channel") or "").lower() == "kyc":
+            continue
+        text = n.get("text") or ""
+        if not LIVED_RE.search(text):
+            continue
+        for c in countries_in_text(text):
+            if c not in seen:
+                seen.add(c)
+                found.append((c, n.get("note_id")))
+    return found
+
+
+def latest_approved_identity(bank, records, notes):
+    """Most recent approved check, provider or onboarding note (principle 4)."""
+    cands = []
+    for c in records:
+        for k in bank.approved_kyc_for.get(c["record_id"], []):
+            cands.append({
+                "source": "kyc",
+                "check_id": k.get("check_id"),
+                "note_id": None,
+                "verified_name": k.get("verified_name"),
+                "verified_dob": parse_date(k.get("verified_dob")),
+                "document_country": country_of(k.get("document_country")),
+                "document_number": k.get("document_number"),
+                "checked_at": parse_date(k.get("checked_at")),
+                "result": "approved",
+            })
+    for n in notes:
+        if (n.get("channel") or "").lower() != "kyc":
+            continue
+        parsed = parse_kyc_note(n)
+        if parsed:
+            cands.append(parsed)
+    if not cands:
+        return None
+
+    def sk(c):
+        iso = c["checked_at"].iso() if c["checked_at"] else ""
+        ident = c.get("check_id") or c.get("note_id") or ""
+        return (iso, ident)
+
+    cands.sort(key=sk)
+    return cands[-1]
+
+
+def screened_fits(customer, screened, bank):
+    """Principle 2: name, DOB (every shared part), country, city."""
+    sc_name = (screened or {}).get("name")
+    sc_dob = parse_date((screened or {}).get("dob"))
+    sc_country = country_of((screened or {}).get("country"))
+    sc_city = (screened or {}).get("city")
+    company = (customer.get("entity_type") or "").lower() == "company"
+    if sc_name:
+        if not bank.ns.any_agree(customer_names(customer), [sc_name], company=company):
+            return False
+    if sc_dob:
+        cd = parse_date(customer.get("dob"))
+        if not cd or not sc_dob.equal_known(cd):
+            return False
+    if sc_country:
+        if sc_country not in customer_declared_countries(customer):
+            return False
+    if sc_city:
+        city = strip_accents(str(sc_city)).lower()
+        blob = strip_accents(" ".join(filter(None, [customer.get("city"), customer.get("address")]))).lower()
+        if city not in blob:
+            return False
+    return True
+
+
+def seed_records(alert, bank):
+    """Follow the alert's link; if it leads to several people, screened details pick."""
+    seeds, seen = [], set()
+
+    def add(cid):
+        if cid and cid in bank.customers_by_id and cid not in seen:
+            seen.add(cid)
+            seeds.append(bank.customers_by_id[cid])
+
+    ref = alert.get("account_ref")
+    login = alert.get("login_handle")
+    email = alert.get("email")
+    linked = False
+    if ref:
+        rows = bank.accounts_by_id.get(ref, [])
+        if rows:
+            linked = True
+            for a in rows:
+                add(a.get("customer_id"))
+    if login:
+        rows = bank.accounts_by_login.get(login, []) or bank.accounts_by_login.get(str(login).lower(), [])
+        if rows:
+            linked = True
+            for a in rows:
+                add(a.get("customer_id"))
+    if email:
+        rows = bank.customers_by_email.get(str(email).lower(), [])
+        if rows:
+            linked = True
+            for c in rows:
+                add(c["record_id"])
+
+    screened = alert.get("customer") or {}
+    if not linked:
+        # no link: search customers that fit what was screened
+        return unlinked_search(screened, bank)
+
+    # A link can lead to more than one person; screened details then pick.
+    # If only one seed so far, keep it (expand later). If several, filter.
+    # Distinct people? We'll filter when more than one seed record does not
+    # already belong to one cluster OR when joint holders are different people.
+    clusters = {bank.cluster_of.get(c["record_id"]) for c in seeds}
+    if len(seeds) > 1 and len(clusters) > 1:
+        fitted = [c for c in seeds if screened_fits(c, screened, bank)]
+        if fitted:
+            return fitted
+        # if none fit, don't use another customer's records: return empty? or all?
+        # "Never use another customer's records." If we can't pick, treat as all
+        # candidates and later AMBIGUOUS. Keep seeds (they're from the link).
+    return seeds
+
+
+def unlinked_search(screened, bank):
+    sc_dob = parse_date((screened or {}).get("dob"))
+    sc_country = country_of((screened or {}).get("country"))
+    # candidate pool
+    pool = None
+    if sc_dob and sc_dob.year:
+        pool = list(bank.by_dob_year.get(sc_dob.year, []))
+        # year tolerance is NOT used for this equality test — exact year required
+    elif sc_country:
+        pool = list(bank.by_country.get(sc_country, []))
+    else:
+        pool = bank.customers
+    out = []
+    for c in pool:
+        if screened_fits(c, screened, bank):
+            out.append(c)
+    return out
+
+
+def expand_person(records, bank):
+    """All records in the same principle-3 clusters as the seeds."""
+    seen, out = set(), []
+    for c in records:
+        root = bank.cluster_of.get(c["record_id"], c["record_id"])
+        for mid in bank.cluster_members.get(root, [c["record_id"]]):
+            if mid not in seen and mid in bank.customers_by_id:
+                seen.add(mid)
+                out.append(bank.customers_by_id[mid])
+    out.sort(key=lambda c: c["record_id"])
+    return out
+
+
+def group_people(seed_records_, bank):
+    """Group seed+expanded records into distinct people."""
+    if not seed_records_:
+        return []
+    # expand each seed, union records of the same cluster
+    buckets = {}
+    for c in seed_records_:
+        root = bank.cluster_of.get(c["record_id"], c["record_id"])
+        buckets.setdefault(root, [])
+    # fill from expanded
+    expanded = expand_person(seed_records_, bank)
+    for c in expanded:
+        root = bank.cluster_of.get(c["record_id"], c["record_id"])
+        if root in buckets:
+            buckets[root].append(c)
+    # also include seeds that somehow missed
+    for c in seed_records_:
+        root = bank.cluster_of.get(c["record_id"], c["record_id"])
+        if c not in buckets.get(root, []):
+            buckets.setdefault(root, []).append(c)
+    people = []
+    for root, recs in sorted(buckets.items(), key=lambda kv: kv[0] or ""):
+        # unique
+        u, seen = [], set()
+        for c in recs:
+            if c["record_id"] not in seen:
+                seen.add(c["record_id"])
+                u.append(c)
+        u.sort(key=lambda c: c["record_id"])
+        people.append(u)
+    return people
+
+
+def build_person(records, bank, screened=None):
+    notes = notes_for_records(bank, records)
+    ident = latest_approved_identity(bank, records, notes)
+    names = []
+    for c in records:
+        for n in customer_names(c):
+            if n not in names:
+                names.append(n)
+    declared_dobs = []
+    for c in records:
+        d = parse_date(c.get("dob"))
+        if d and d not in declared_dobs:
+            declared_dobs.append(d)
+    countries = []
+    seen_c = set()
+    for c in records:
+        for x in customer_declared_countries(c):
+            if x not in seen_c:
+                seen_c.add(x)
+                countries.append(x)
+    doc_countries = []
+    if ident and ident.get("document_country"):
+        doc_countries.append(ident["document_country"])
+        if ident["document_country"] not in seen_c:
+            seen_c.add(ident["document_country"])
+            countries.append(ident["document_country"])
+    lived = lived_countries(notes)
+    lived_ids = []
+    for ctry, nid in lived:
+        lived_ids.append(nid)
+        if ctry not in seen_c:
+            seen_c.add(ctry)
+            countries.append(ctry)
+    etypes = {(c.get("entity_type") or "") for c in records}
+    if "Company" in etypes and "Individual" not in etypes:
+        etype = "Company"
+    elif "Individual" in etypes and "Company" not in etypes:
+        etype = "Individual"
+    else:
+        etype = (records[0].get("entity_type") if records else None) or (
+            (screened or {}).get("entity_type")
+        )
+    verified_name = ident["verified_name"] if ident else None
+    verified_dob = ident["verified_dob"] if ident else None
+    dob = verified_dob or (declared_dobs[0] if declared_dobs else None)
+    # incorporation date for companies: declared dob / verified_dob
+    incorp = dob if etype == "Company" else None
+    rec_ids = [c["record_id"] for c in records]
+    return {
+        "records": records,
+        "record_ids": rec_ids,
+        "customer_record_id": rec_ids[0] if rec_ids else None,  # any is accepted
+        "notes": notes,
+        "ident": ident,
+        "names": names,
+        "verified_name": verified_name,
+        "dob": dob,
+        "declared_dobs": declared_dobs,
+        "countries": countries,
+        "lived_note_ids": [n for n in lived_ids if n],
+        "entity_type": etype,
+        "incorporation": incorp,
+    }
+
+
+def resolve_people(alert, bank):
+    seeds = seed_records(alert, bank)
+    groups = group_people(seeds, bank)
+    screened = alert.get("customer") or {}
+    people = [build_person(g, bank, screened) for g in groups]
+    people.sort(key=lambda p: p["customer_record_id"] or "")
+    return people
+
+# =============================================================================
+# Hit facts (principle 5)
+# =============================================================================
+
+DATED_REPORT_RE = re.compile(
+    r"According to .+?;\s*("
+    r"(?:January|February|March|April|May|June|July|August|September|October|November|December|"
+    r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?"
+    r"(?:\s+\d{1,2},)?\s+\d{4}"
+    r")\s*:",
+    re.I,
+)
+
+AGE_PATTERNS = [
+    # aged 45 when/in March 2019; aged 30, in November 1998; aged 46, ... in January 2023
+    re.compile(
+        r"\b(?:aged?|age)\s+(\d{1,3})(?:\s+years?(?:\s+old)?)?"
+        r"(?:[^0-9]{0,80}?)"
+        r"(?:in|on|as of|as at|from|during)\s+"
+        r"((?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?(?:\s+\d{1,2},)?\s+)?(\d{4})\b",
+        re.I,
+    ),
+    # at the age of 33, ... in February 2010
+    re.compile(
+        r"\bat the age of\s+(\d{1,3})"
+        r"(?:[^0-9]{0,80}?)"
+        r"(?:in|on|as of|from|during)\s+"
+        r"((?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?(?:\s+\d{1,2},)?\s+)?(\d{4})\b",
+        re.I,
+    ),
+    # 33 year old X ... in May 2019  OR  In February 2010, ... 33 year old
+    re.compile(
+        r"(?:(?:in|on|from)\s+"
+        r"((?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?(?:\s+\d{1,2},)?\s+)?(\d{4})"
+        r"[^0-9]{0,80}?)?"
+        r"\b(\d{1,3})\s*(?:-?\s*)?(?:year(?:s)?[\s-]?old|years old)\b"
+        r"(?:[^0-9]{0,80}?(?:in|on|from)\s+"
+        r"((?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?(?:\s+\d{1,2},)?\s+)?(\d{4}))?",
+        re.I,
+    ),
+    # "X, 52, who was ... from June 2012" / "listed X, 29, a politically"
+    re.compile(
+        r",\s+(\d{1,3}),\s+"
+        r"(?:[^0-9]{0,120}?)"
+        r"(?:in|from|on)\s+"
+        r"((?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?(?:\s+\d{1,2},)?\s+)?(\d{4})\b",
+        re.I,
+    ),
+]
+
+
+def first_paragraph(text):
+    if not text:
+        return ""
+    parts = re.split(r"\n\s*\n", text.strip(), maxsplit=1)
+    return parts[0]
+
+
+def ages_to_years(age, year):
+    age, year = int(age), int(year)
+    if not (0 < age < 120 and 1800 <= year <= 2100):
+        return []
+    return [year - age - 1, year - age]
+
+
+def extract_age_years(text):
+    """Pair an age with a nearby date (typically the same sentence)."""
+    years, phrases = [], []
+    if not text:
+        return years, phrases
+    age_res = [
+        re.compile(r"\b(?:aged?|age)\s+(\d{1,3})\b", re.I),
+        re.compile(r"\bat (?:the )?age of\s+(\d{1,3})\b", re.I),
+        re.compile(r"\breached the age of\s+(\d{1,3})\b", re.I),
+        re.compile(r"\ba\s+(\d{1,3})-year-old\b", re.I),
+        re.compile(r"\b(\d{1,3})\s*-?\s*year(?:s)?[\s-]?old\b", re.I),
+        re.compile(r"\b(?:he|she|they|who)\s+was\s+(\d{1,3})\b", re.I),
+        re.compile(r",\s+(\d{1,3}),\s+"),
+    ]
+    date_re = re.compile(
+        r"(?:January|February|March|April|May|June|July|August|September|October|November|December|"
+        r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?"
+        r"(?:\s+\d{1,2},)?\s+\d{4}"
+        r"|\b(?:in|on|of|from|during|saw)\s+(19|20)\d{2}\b",
+        re.I,
+    )
+    seen = set()
+    for are in age_res:
+        for am in are.finditer(text):
+            age = int(am.group(1))
+            if not (1 <= age <= 119):
+                continue
+            # search a window around the age for a month/year
+            lo = max(0, am.start() - 160)
+            hi = min(len(text), am.end() + 160)
+            window = text[lo:hi]
+            # prefer a month-named date, closest to the age
+            cands = []
+            for dm in date_re.finditer(window):
+                raw = dm.group(0)
+                d = parse_date(raw)
+                if not d:
+                    ym = re.search(r"(19|20)\d{2}", raw)
+                    if ym:
+                        d = parse_date(ym.group(0))
+                if not d:
+                    continue
+                # position of date in full text
+                pos = lo + dm.start()
+                dist = min(abs(pos - am.start()), abs(pos - am.end()))
+                has_month = bool(d.month)
+                cands.append((0 if has_month else 1, dist, d, dm.group(0)))
+            if not cands:
+                continue
+            cands.sort()
+            _rank, _dist, d, dstr = cands[0]
+            phrase = text[min(am.start(), lo + date_re.search(window).start() if False else am.start()): am.end()]
+            phrase = (dstr + " / age " + str(age)).strip()
+            for y in ages_to_years(age, d.year):
+                if y not in seen:
+                    seen.add(y)
+                    years.append(PDate(y))
+            phrases.append(phrase)
+    return years, phrases
+
+
+
+def listing_phrase_for(hit):
+    cat = (hit.get("primary_category") or "")
+    if not cat:
+        cats = hit.get("categories") or []
+        cat = cats[0] if cats else ""
+    key = (cat or "").strip().lower()
+    return LISTING_PHRASE.get(key, DEFAULT_LISTING_PHRASE)
+
+
+def hit_countries(hit):
+    vals = []
+    for key in ("countries", "nationality", "citizenship"):
+        v = hit.get(key)
+        if isinstance(v, list):
+            vals.extend(v)
+        elif v:
+            vals.append(v)
+    if hit.get("place_of_birth"):
+        vals.append(hit["place_of_birth"])
+    for addr in hit.get("addresses") or []:
+        c = last_address_country(addr)
+        if c:
+            vals.append(c)
+    return countries_from_values(vals)
+
+
+def hit_names(hit):
+    names = []
+    for key in ("name", "best_matching_name", "first_name", "middle_name", "last_name"):
+        # first/middle/last alone are not full names; collect full ones first
+        pass
+    for key in ("name", "best_matching_name"):
+        v = hit.get(key)
+        if v and v not in names:
+            names.append(v)
+    for a in hit.get("aliases") or []:
+        text = re.sub(r"\s*\((?:AKA|FKA|NKA)\)\s*$", "", str(a), flags=re.I).strip()
+        if text and text not in names:
+            names.append(text)
+    # constructed "first middle last" if pieces exist
+    pieces = [hit.get("first_name"), hit.get("middle_name"), hit.get("last_name")]
+    built = " ".join(p for p in pieces if p)
+    if built and built not in names:
+        names.append(built)
+    return names
+
+
+def dated_reports(profile_notes):
+    dates = []
+    if not profile_notes:
+        return dates
+    for m in DATED_REPORT_RE.finditer(profile_notes):
+        d = parse_date(m.group(1))
+        if d:
+            dates.append(d)
+    return dates
+
+
+def death_date(hit):
+    d = parse_date(hit.get("deceased_date"))
+    if d:
+        return d
+    notes = hit.get("profile_notes") or ""
+    m = re.search(
+        r"(?:died|deceased|date of death|passed away)\s+(?:on\s+|in\s+)?"
+        r"(\d{4}-\d{2}-\d{2}|(?:January|February|March|April|May|June|July|August|"
+        r"September|October|November|December)\s+\d{1,2},\s+\d{4}|\d{4})",
+        notes,
+        re.I,
+    )
+    if m:
+        return parse_date(m.group(1))
+    return None
+
+
+def search_rows_for_hit(hit, bank):
+    names = hit_names(hit)
+    rows, seen = [], set()
+
+    def add_list(lst):
+        for s in lst:
+            rid = s.get("result_id")
+            if rid in seen:
+                continue
+            seen.add(rid)
+            rows.append(s)
+
+    for name in names:
+        q = strip_accents(name).lower()
+        q = re.sub(r"[^\w\s]", " ", q)
+        q = re.sub(r"\s+", " ", q).strip()
+        if not q:
+            continue
+        add_list(bank.search_by_query.get(q, []))
+        add_list(bank.search_by_sorted.get(" ".join(sorted(q.split())), []))
+        # last, first -> first last
+        if "," in name:
+            bits = [p.strip() for p in name.split(",", 1)]
+            if len(bits) == 2 and bits[0] and bits[1]:
+                q2 = strip_accents(bits[1] + " " + bits[0]).lower()
+                q2 = re.sub(r"[^\w\s]", " ", q2)
+                q2 = re.sub(r"\s+", " ", q2).strip()
+                add_list(bank.search_by_query.get(q2, []))
+                add_list(bank.search_by_sorted.get(" ".join(sorted(q2.split())), []))
+    rows.sort(key=lambda s: s.get("result_id") or "")
+    return rows
+
+
+def result_is_about_hit(result, hit, countries):
+    """Same kind of listing, in a country tied to the hit (principle 5)."""
+    blob = " ".join(filter(None, [result.get("title"), result.get("snippet")]))
+    if not blob:
+        return False
+    phrase = listing_phrase_for(hit)
+    if phrase.lower() not in blob.lower():
+        return False
+    if not countries:
+        return False
+    text_countries = set(countries_in_text(blob))
+    # also direct alias of a hit country in the text
+    low = strip_accents(blob).lower()
+    for c in countries:
+        if c in text_countries:
+            return True
+        if c.lower() in low:
+            return True
+    return False
+
+
+def extract_hit(hit, bank):
+    names = hit_names(hit)
+    etype = hit.get("entity_type")
+    countries = hit_countries(hit)
+    structured_dobs = [parse_date(d) for d in (hit.get("dobs") or [])]
+    structured_dobs = [d for d in structured_dobs if d]
+    profile = hit.get("profile_notes") or ""
+    first = first_paragraph(profile)
+    note_years, note_phrases = extract_age_years(first)
+    # For companies, only the dobs field is an incorporation date.
+    dobs = list(structured_dobs)
+    dob_sources = []
+    if etype != "Company":
+        if note_years:
+            for d in note_years:
+                if d not in dobs:
+                    dobs.append(d)
+            dob_sources.append(("profile_notes", note_phrases, None))
+    search_used = []
+    search_phrases = []
+    if etype != "Company" and not structured_dobs and not note_years:
+        for row in search_rows_for_hit(hit, bank):
+            if not result_is_about_hit(row, hit, countries):
+                continue
+            blob = " ".join(filter(None, [row.get("title"), row.get("snippet")]))
+            yrs, ph = extract_age_years(blob)
+            # also "born 1962"
+            if not yrs:
+                m = re.search(r"\bborn(?:\s+in|\s+on)?\s+(\d{4}|\d{4}-\d{2}-\d{2})", blob, re.I)
+                if m:
+                    d = parse_date(m.group(1))
+                    if d:
+                        yrs = [d]
+                        ph = [m.group(0)]
+            if yrs:
+                for d in yrs:
+                    if d not in dobs:
+                        dobs.append(d)
+                search_used.append(row)
+                search_phrases.extend(ph)
+        if search_used:
+            dob_sources.append(("search", search_phrases, [s["result_id"] for s in search_used]))
+    reports = dated_reports(profile)
+    death = death_date(hit)
+    return {
+        "hit": hit,
+        "hit_id": hit.get("hit_id"),
+        "names": names,
+        "entity_type": etype,
+        "countries": countries,
+        "dobs": dobs,
+        "structured_dobs": structured_dobs,
+        "dob_sources": dob_sources,
+        "search_used": search_used,
+        "dated_reports": reports,
+        "death": death,
+        "life_status": hit.get("life_status"),
+        "profile": profile,
+    }
+
+
+# =============================================================================
+# Comparisons and decisions
+# =============================================================================
+
+def is_company(etype):
+    return (etype or "").lower() == "company"
+
+
+def is_person(etype):
+    t = (etype or "").lower()
+    return t in {"individual", "person", "natural"}
+
+
+def type_mismatch(person, hitf):
+    a, b = person.get("entity_type"), hitf.get("entity_type")
+    return (is_person(a) and is_company(b)) or (is_company(a) and is_person(b))
+
+
+def age_bounds(dob, event):
+    if not dob or not event:
+        return None, None
+    d0, d1 = dob.date_min(), dob.date_max()
+    e0, e1 = event.date_min(), event.date_max()
+    if not d0 or not e1:
+        return None, None
+
+    def years_between(later, earlier):
+        y = later.year - earlier.year
+        if (later.month, later.day) < (earlier.month, earlier.day):
+            y -= 1
+        return y
+
+    # min age: latest dob, earliest event; max age: earliest dob, latest event
+    return years_between(e0, d1), years_between(e1, d0)
+
+
+def earliest_report(hitf):
+    dates = [d for d in hitf.get("dated_reports") or [] if d]
+    if not dates:
+        return None
+    dates.sort(key=lambda d: (d.year or 9999, d.month or 1, d.day or 1))
+    return dates[0]
+
+
+def temporal_impossibility(person, hitf):
+    event = earliest_report(hitf)
+    if not event:
+        return False, None
+    if is_company(person.get("entity_type")) or is_company(hitf.get("entity_type")):
+        inc = person.get("incorporation")
+        if inc:
+            i0, e1 = inc.date_min(), event.date_max()
+            if i0 and e1 and i0 > e1:
+                return True, ("incorporated", inc, event)
+        return False, None
+    dob = person.get("dob")
+    if not dob:
+        return False, None
+    min_age, max_age = age_bounds(dob, event)
+    if max_age is not None and max_age < MIN_AGE_AT_EVENT:
+        return True, ("too_young", dob, event, max_age)
+    return False, None
+
+
+def deceased_before_screening(person, hitf, alert):
+    death = hitf.get("death")
+    screen = parse_date(alert.get("screened_at"))
+    if not death or not screen:
+        return False, None
+    d1, s0 = death.date_max(), screen.date_min()
+    if d1 and s0 and d1 < s0:
+        return True, (death, screen)
+    return False, None
+
+
+def dob_contradicts(person, hitf):
+    """Every birth date the hit gives is contradicted. One agreeing date blocks this."""
+    cust = person.get("dob")
+    # companies: incorporation date vs hit dobs
+    if is_company(person.get("entity_type")):
+        cust = person.get("incorporation") or cust
+    hits = hitf.get("dobs") or []
+    if not cust or not hits:
+        return False
+    for hd in hits:
+        if not cust.contradicts(hd):
+            return False
+    return True
+
+
+def dob_agrees(person, hitf):
+    cust = person.get("dob")
+    hits = hitf.get("dobs") or []
+    if not cust or not hits:
+        return False
+    for hd in hits:
+        if cust.agrees(hd):
+            return True
+    return False
+
+
+def name_agrees(person, hitf, bank, use_verified=True):
+    company = is_company(person.get("entity_type")) or is_company(hitf.get("entity_type"))
+    cust_names = []
+    if use_verified and person.get("verified_name"):
+        cust_names = [person["verified_name"]]
+    else:
+        cust_names = list(person.get("names") or [])
+        if person.get("verified_name") and person["verified_name"] not in cust_names:
+            cust_names.insert(0, person["verified_name"])
+    return bank.ns.any_agree(cust_names, hitf.get("names") or [], company=company)
+
+
+def verified_name_mismatch(person, hitf, bank):
+    vname = person.get("verified_name")
+    if not vname:
+        return False
+    company = is_company(person.get("entity_type"))
+    parts = bank.ns.parts(vname, company=company)
+    # Individual whose verified name has < 2 real parts: cannot clear on name
+    if is_person(person.get("entity_type")) and len(parts) < 2:
+        return False
+    return not bank.ns.any_agree([vname], hitf.get("names") or [], company=company)
+
+
+def location_mismatch(person, hitf):
+    a = person.get("countries") or []
+    b = hitf.get("countries") or []
+    if not a or not b:
+        return False  # missing is not a mismatch
+    return set(a).isdisjoint(set(b))
+
+
+def location_agrees(person, hitf):
+    a = person.get("countries") or []
+    b = hitf.get("countries") or []
+    if not a or not b:
+        return False
+    return not set(a).isdisjoint(set(b))
+
+
+def decide_one(person, hitf, alert, bank):
+    """Return (decision, reason_key, detail, evidence)."""
+    ev = []
+    for rid in person.get("record_ids") or []:
+        ev.append(rid)
+    ident = person.get("ident")
+    if ident:
+        if ident.get("source") == "kyc" and ident.get("check_id"):
+            ev.append(ident["check_id"])
+        if ident.get("note_id"):
+            ev.append(ident["note_id"])
+    for nid in person.get("lived_note_ids") or []:
+        ev.append(nid)
+    for s in hitf.get("search_used") or []:
+        ev.append(s.get("result_id"))
+
+    def pack(decision, key, detail):
+        # unique evidence, stable
+        seen, out = set(), []
+        for x in ev:
+            if x and x not in seen:
+                seen.add(x)
+                out.append(x)
+        return decision, key, detail, out
+
+    # Type
+    if type_mismatch(person, hitf):
+        return pack(
+            "DIFFERENT_ENTITY",
+            "ENTITY_TYPE_MISMATCH",
+            f"The customer is a {person.get('entity_type')} and the listed profile is a {hitf.get('entity_type')}.",
+        )
+
+    # Deceased
+    dead, meta = deceased_before_screening(person, hitf, alert)
+    if dead:
+        death, screen = meta
+        return pack(
+            "DIFFERENT_ENTITY",
+            "DECEASED",
+            f"The listed profile gives a date of death of {death.iso()}, which is before the customer was screened ({screen.iso()}).",
+        )
+
+    # Temporal
+    temp, meta = temporal_impossibility(person, hitf)
+    if temp:
+        if meta[0] == "too_young":
+            dob, event, max_age = meta[1], meta[2], meta[3]
+            return pack(
+                "DIFFERENT_ENTITY",
+                "TEMPORAL_IMPOSSIBILITY",
+                f"The customer's date of birth is {dob.iso()}, so they were at most {max_age} years old at the earliest dated report ({event.iso()}), below {MIN_AGE_AT_EVENT}.",
+            )
+        inc, event = meta[1], meta[2]
+        return pack(
+            "DIFFERENT_ENTITY",
+            "TEMPORAL_IMPOSSIBILITY",
+            f"The company was incorporated on {inc.iso()}, which is after the earliest dated report ({event.iso()}).",
+        )
+
+    # DOB
+    if dob_contradicts(person, hitf):
+        ciso = person.get("dob").iso() if person.get("dob") else "unknown"
+        hiso = ", ".join(d.iso() for d in hitf.get("dobs") or []) or "unknown"
+        return pack(
+            "DIFFERENT_ENTITY",
+            "DOB_MISMATCH",
+            f"The customer's date of birth is {ciso} but the hit's date of birth is {hiso}.",
+        )
+
+    # Verified name
+    if verified_name_mismatch(person, hitf, bank):
+        hitn = (hitf.get("names") or ["the listed name"])[0]
+        ident_id = ""
+        if ident:
+            ident_id = ident.get("check_id") or ident.get("note_id") or ""
+        src = f" ({ident_id})" if ident_id else ""
+        return pack(
+            "DIFFERENT_ENTITY",
+            "NAME_MISMATCH_VERIFIED",
+            f"The customer's verified name is {person.get('verified_name')}{src}, which does not match the hit's name {hitn}.",
+        )
+
+    n_ok = name_agrees(person, hitf, bank, use_verified=True)
+    # If no verified name, agreement uses declared names
+    if not person.get("verified_name"):
+        n_ok = name_agrees(person, hitf, bank, use_verified=False)
+    # Individual with <2 real parts on the name we would confirm with: cannot confirm or clear on name
+    name_for_parts = person.get("verified_name") or ((person.get("names") or [None])[0])
+    company = is_company(person.get("entity_type"))
+    too_few_parts = (
+        is_person(person.get("entity_type"))
+        and name_for_parts
+        and len(bank.ns.parts(name_for_parts, company=False)) < 2
+    )
+    if too_few_parts:
+        n_ok = False
+
+    d_ok = dob_agrees(person, hitf)
+    l_ok = location_agrees(person, hitf)
+    l_mis = location_mismatch(person, hitf)
+
+    # Location mismatch, except when name and DOB agree -> REVIEW
+    if l_mis and not (n_ok and d_ok):
+        return pack(
+            "DIFFERENT_ENTITY",
+            "LOCATION_MISMATCH",
+            f"The customer is linked only to {', '.join(person.get('countries') or [])} but the hit is linked only to {', '.join(hitf.get('countries') or [])}.",
+        )
+
+    # Confirm
+    if is_company(person.get("entity_type")) or is_company(hitf.get("entity_type")):
+        if n_ok and l_ok:
+            return pack(
+                "SAME_ENTITY",
+                "NAME_LOCATION_MATCH",
+                f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
+            )
+    else:
+        if n_ok and d_ok and not l_mis:
+            # name+DOB agree; country difference would have been REVIEW via l_mis and (n_ok and d_ok)
+            key = "NAME_DOB_LOCATION_MATCH" if l_ok else "NAME_DOB_MATCH"
+            ciso = person.get("dob").iso() if person.get("dob") else "unknown"
+            hiso = ", ".join(d.iso() for d in hitf.get("dobs") or [])
+            extra = f" Both the customer and the hit are linked to {', '.join(sorted(set(person['countries']) & set(hitf['countries'])))}." if l_ok else ""
+            return pack(
+                "SAME_ENTITY",
+                key,
+                f"The customer's date of birth {ciso} agrees with the hit's {hiso}.{extra} The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
+            )
+
+    # Name+DOB agree but countries all differ -> REVIEW (already excluded SAME and LOCATION)
+    missing = []
+    if not person.get("dob") or not (hitf.get("dobs") or []):
+        missing.append("the date of birth cannot be compared with it")
+    detail = "Nothing in the customer's records contradicts the hit"
+    if n_ok:
+        detail += f", and the customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}"
+    if missing:
+        detail += ", and " + " and ".join(missing)
+    detail += ", so the hit can be neither cleared nor confirmed."
+    if l_ok:
+        detail = (
+            f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. "
+            + detail
+        )
+    return pack("REVIEW", "INSUFFICIENT_DATA", detail)
+
+
+def compose_reason(person, hitf, result, ambiguous, same_decision, bank):
+    decision, key, detail, _ev = result
+    comps = []
+    # 2-4 sentences naming this hit's facts
+    sentences = []
+    if ambiguous:
+        ids = ", ".join(person.get("all_ids") or person.get("record_ids") or [])
+        if same_decision:
+            sentences.append(f"More than one person in the system of record fits this alert ({ids}); each is decided separately and they lead to the same decision.")
+            sentences.append(detail)
+        else:
+            sentences.append(f"More than one person in the system of record fits this alert ({ids}) and they lead to different decisions.")
+            sentences.append(detail)
+    else:
+        sentences.append(detail)
+    # what's missing, if REVIEW, and we still have room (reasons are 2-4 sentences)
+    if decision == "REVIEW" and key == "INSUFFICIENT_DATA" and len(sentences) < 4:
+        gaps = []
+        if not person.get("dob"):
+            gaps.append("the customer has no usable date of birth")
+        if not (hitf.get("dobs") or []):
+            gaps.append("the hit has no usable date of birth")
+        if not (person.get("countries") or []):
+            gaps.append("the customer has no tied country")
+        if not (hitf.get("countries") or []):
+            gaps.append("the hit has no tied country")
+        if gaps:
+            sentences.append("Missing from the comparison: " + "; ".join(gaps) + ".")
+    sentences = [s.strip() for s in sentences if s and s.strip()]
+    if len(sentences) < 2:
+        cname = person.get("verified_name") or ((person.get("names") or ["the customer"])[0] or "the customer")
+        hname = (hitf.get("names") or ["the listed profile"])[0] or "the listed profile"
+        sentences.append(f"The customer is {cname}; the listed profile is {hname}.")
+    text = " ".join(sentences[:4])
+    return text
+
+
+def decide_hit(alert, hit, bank):
+    people = resolve_people(alert, bank)
+    hitf = extract_hit(hit, bank)
+    aid = hit.get("alert_id") or (alert.get("alert_id") if alert else None)
+    hid = hit.get("hit_id")
+
+    if not people:
+        # no customer record found
+        reason = (
+            "No customer record could be resolved from the alert's link or from the screened details. "
+            "Without a customer picture the hit can be neither cleared nor confirmed."
+        )
+        return {
+            "hit_id": hid,
+            "alert_id": aid,
+            "decision": "REVIEW",
+            "reason_code": "INSUFFICIENT_DATA",
+            "customer_record_id": None,
+            "reason": reason,
+            "evidence": [],
+        }
+
+    results = [decide_one(p, hitf, alert, bank) for p in people]
+    if len(people) == 1:
+        person = people[0]
+        decision, key, detail, ev = results[0]
+        reason = compose_reason(person, hitf, results[0], False, True, bank)
+        return {
+            "hit_id": hid,
+            "alert_id": aid,
+            "decision": decision,
+            "reason_code": key,
+            "customer_record_id": person["customer_record_id"],
+            "reason": reason,
+            "evidence": ev,
+        }
+
+    # Several people: if they all lead to the same decision, give it, else REVIEW / AMBIGUOUS
+    # customer_record_id is AMBIGUOUS either way
+    decisions = [r[0] for r in results]
+    all_ids = []
+    for p in people:
+        all_ids.extend(p["record_ids"])
+    # pick a representative person (first by id) for reason text
+    for p, r in zip(people, results):
+        p["all_ids"] = all_ids
+    if len(set(decisions)) == 1:
+        # same decision — if reason codes differ, any accepted; pick first
+        # merge evidence
+        ev, seen = [], set()
+        for r in results:
+            for x in r[3]:
+                if x not in seen:
+                    seen.add(x)
+                    ev.append(x)
+        # prefer a result whose code is common if possible
+        codes = [r[1] for r in results]
+        chosen = results[0]
+        for r in results:
+            if codes.count(r[1]) == len(results):
+                chosen = r
+                break
+        decision, key, detail, _ = chosen
+        reason = compose_reason(people[0], hitf, (decision, key, detail, ev), True, True, bank)
+        return {
+            "hit_id": hid,
+            "alert_id": aid,
+            "decision": decision,
+            "reason_code": key,
+            "customer_record_id": "AMBIGUOUS",
+            "reason": reason,
+            "evidence": ev,
+        }
+
+    # different decisions
+    ev, seen = [], set()
+    ev.append(hid) if False else None
+    for p in people:
+        for rid in p["record_ids"]:
+            if rid not in seen:
+                seen.add(rid)
+                ev.append(rid)
+    reason = compose_reason(
+        people[0], hitf,
+        ("REVIEW", "AMBIGUOUS_CUSTOMER_RECORD",
+         "The people who fit the alert do not all lead to the same decision for this hit.", ev),
+        True, False, bank,
+    )
+    return {
+        "hit_id": hid,
+        "alert_id": aid,
+        "decision": "REVIEW",
+        "reason_code": "AMBIGUOUS_CUSTOMER_RECORD",
+        "customer_record_id": "AMBIGUOUS",
+        "reason": reason,
+        "evidence": ev,
+    }
+
+
+def run(data_folder, output_file):
+    bank = load_bank(data_folder)
+    # one line per hit, deterministic order
+    hits = sorted(bank.hits, key=lambda h: h.get("hit_id") or "")
+    rows = []
+    for hit in hits:
+        alert = bank.alerts_by_id.get(hit.get("alert_id")) or {}
+        rows.append(decide_hit(alert, hit, bank))
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False, separators=(", ", ": ")))
+            fh.write("\n")
+    return len(rows)
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) != 2:
+        print("Usage: system/run <data_folder> <output_file>", file=sys.stderr)
+        return 2
+    n = run(argv[0], argv[1])
+    print(f"wrote {n} predictions to {argv[1]}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
