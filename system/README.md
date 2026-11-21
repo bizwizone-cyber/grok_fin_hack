@@ -35,7 +35,7 @@ flowchart TD
   D --> E3[REVIEW otherwise]
 ```
 
-The comparison is Splink-inspired, stdlib-only: each field (name, date of birth, country) is compared on its own and recorded as evidence for or against. Name agreement itself uses the edit-distance and variant rules in principle 8, not a similarity score. A hand-written Jaro–Winkler function is in the file only as an unused extra and is never consulted by a rule.
+The comparison is Splink-inspired and stdlib-only: each field (name, date of birth, country and entity type) becomes an explicit `agree`, `contradict` or `unknown` comparison level. A small fixed-weight Fellegi–Sunter-style score then gates confirmations: DOB agreement is stronger than a name match and country agreement is corroboration. The score never authorises a clearance; only a hard contradiction in `POLICY.md` can do that. Name agreement itself uses the edit-distance and variant rules in principle 8, not a similarity score.
 
 ## How we find the customer
 
@@ -68,6 +68,7 @@ Name parts are compared as in principle 8: case, accents, punctuation and bracke
 - Sets of records are sorted by ID. "Most recent" checks are ordered by date, then ID.
 - There is no randomness and no clock. The only dates used are those in the data (for example `alerts.screened_at`).
 - No language model and no OpenRouter call. There is no API cost, and a second run is byte-identical to the first (confirmed on the development set).
+- The local comparison levels and fixed weights replace a dependency on Splink: there is no training pass, random seed, or external data. They can only keep an uncertain hit in `REVIEW`; they cannot turn it into `DIFFERENT_ENTITY`.
 
 ## Three example cases
 

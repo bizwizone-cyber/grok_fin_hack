@@ -861,6 +861,19 @@ def jw_best(names_a, names_b, ns):
             best = max(best, jaro_winkler(pa, pb), jaro_winkler(sa, sb))
     return best
 
+
+def linkage_score(levels, company=False):
+    """Fixed m/u-style weights used only to gate confirmations.
+
+    This is a small, local version of Splink's comparison-level approach. The
+    policy, rather than this score, remains the only source of a clearance.
+    """
+    weights = {"name": 4.0, "dob": 6.0, "country": 2.0, "entity_type": 1.0}
+    total = sum(weights[field] for field, level in levels.items() if level == "agree")
+    # Policy requires name + country for a company; people need name + DOB.
+    # These thresholds cannot authorise a DIFFERENT_ENTITY result.
+    return total, (6.0 if company else 10.0)
+
 # =============================================================================
 # IO
 # =============================================================================
@@ -1992,6 +2005,47 @@ def location_agrees(person, hitf):
     return not set(a).isdisjoint(set(b))
 
 
+def splink_style_profile(person, hitf, bank, name_agreement, dob_agreement,
+                         country_agreement, country_mismatch):
+    """Build deterministic comparison levels before a policy decision.
+
+    Unknown values are never treated as a mismatch. This mirrors the useful
+    structure of Fellegi-Sunter linkage without training or external data.
+    """
+    if type_mismatch(person, hitf):
+        type_level = "contradict"
+    elif person.get("entity_type") and hitf.get("entity_type"):
+        type_level = "agree"
+    else:
+        type_level = "unknown"
+    if name_agreement:
+        name_level = "agree"
+    elif verified_name_mismatch(person, hitf, bank):
+        name_level = "contradict"
+    else:
+        name_level = "unknown"
+    if dob_agreement:
+        dob_level = "agree"
+    elif dob_contradicts(person, hitf):
+        dob_level = "contradict"
+    else:
+        dob_level = "unknown"
+    country_level = "agree" if country_agreement else (
+        "contradict" if country_mismatch else "unknown"
+    )
+    levels = {
+        "name": name_level,
+        "dob": dob_level,
+        "country": country_level,
+        "entity_type": type_level,
+    }
+    score, threshold = linkage_score(
+        levels,
+        company=is_company(person.get("entity_type")) or is_company(hitf.get("entity_type")),
+    )
+    return {"levels": levels, "score": score, "threshold": threshold}
+
+
 def decide_one(person, hitf, alert, bank):
     """Return (decision, reason_key, detail, evidence)."""
     ev = []
@@ -2093,6 +2147,7 @@ def decide_one(person, hitf, alert, bank):
     d_ok = dob_agrees(person, hitf)
     l_ok = location_agrees(person, hitf)
     l_mis = location_mismatch(person, hitf)
+    linkage = splink_style_profile(person, hitf, bank, n_ok, d_ok, l_ok, l_mis)
     # Safety valve: if either side has a country value we cannot read, it might be
     # the country they share, so the recognised countries differing proves nothing.
     # Such a hit is neither cleared nor confirmed on location.
@@ -2112,14 +2167,14 @@ def decide_one(person, hitf, alert, bank):
 
     # Confirm
     if is_company(person.get("entity_type")) or is_company(hitf.get("entity_type")):
-        if n_ok and l_ok:
+        if n_ok and l_ok and linkage["score"] >= linkage["threshold"]:
             return pack(
                 "SAME_ENTITY",
                 "NAME_LOCATION_MATCH",
                 f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
             )
     else:
-        if n_ok and d_ok and not l_mis and not loc_unsure:
+        if n_ok and d_ok and not l_mis and not loc_unsure and linkage["score"] >= linkage["threshold"]:
             # name+DOB agree; country difference would have been REVIEW via l_mis and (n_ok and d_ok)
             key = "NAME_DOB_LOCATION_MATCH" if l_ok else "NAME_DOB_MATCH"
             ciso = person.get("dob").iso() if person.get("dob") else "unknown"
