@@ -29,16 +29,3 @@ demo / analyst layer, not in `system/run`.
   and the decision agrees with the rule engine. Any failure -> REVIEW.
 - One-way safety valve: the LLM can make a decision more careful
   (DIFFERENT -> REVIEW), never less careful.
-
-## Other ideas (from earlier discussion)
-
-- Next best action for each REVIEW: name the missing fact and what the analyst must do.
-- Policy check scorecard: green / red / grey for each check, with clickable IDs.
-- Animated evidence path, like the `path` field in the practice labels.
-- Red-team stress test: rewrite notes / names / date formats and check that decisions stay correct.
-- Good-guy list: remember cleared customer + list profile pairs.
-- Policy editor with live impact (change a threshold, see which decisions change).
-- Name alignment view (which rule matched each name part).
-- Grok Bot: four-eyes approval card before escalation; morning routine summary in Slack;
-  "ask the case" in a Slack thread.
-- Impact numbers: alerts closed automatically, analyst hours saved.
