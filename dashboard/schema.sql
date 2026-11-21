@@ -53,3 +53,26 @@ create policy demo_anon_select_runs on public.runs for select to anon using (tru
 create policy demo_anon_select_decisions on public.decisions for select to anon using (true);
 create policy demo_anon_select_reviews on public.analyst_reviews for select to anon using (true);
 create policy demo_anon_insert_reviews on public.analyst_reviews for insert to anon with check (true);
+
+-- Tavily web research (analyst support only; written by the tavily-research edge function)
+create table if not exists public.web_research (
+  id bigint generated always as identity primary key,
+  run_id uuid not null,
+  hit_id text not null,
+  query text not null,
+  results jsonb not null default '[]'::jsonb,
+  summary text,
+  created_at timestamptz not null default now(),
+  foreign key (run_id, hit_id) references public.decisions(run_id, hit_id) on delete cascade
+);
+create index if not exists web_research_hit_idx on public.web_research (run_id, hit_id, created_at desc);
+alter table public.web_research enable row level security;
+create policy demo_anon_select_research on public.web_research for select to anon using (true);
+
+-- Optional private key store (RLS on, no policies: only the service role can read it).
+-- Prefer Edge Function secrets (TAVILY_API_KEY) instead.
+create table if not exists public.app_secrets (
+  name text primary key,
+  value text not null
+);
+alter table public.app_secrets enable row level security;
