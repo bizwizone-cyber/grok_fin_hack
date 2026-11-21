@@ -89,6 +89,7 @@ No alert link. A search on the screened name, year of birth and country finds tw
 ```
 system/run dev output/dev.jsonl
 python3 validate.py --data dev --output output/dev.jsonl --score dev/practice_labels.jsonl
+python3 system/test_safety_regressions.py
 ```
 
 On the 50 practice labels this system scores **100.0**, with **0 unsafe clearances**, and every right decision has an accepted reason code and customer record.
