@@ -41,8 +41,10 @@
   .bar .trk{flex:1;background:#f0f3f8;border-radius:4px;height:18px;overflow:hidden;display:flex} .bar .seg{height:100%} .bar .num{width:44px;color:var(--mute)}
   .seg.SAME_ENTITY{background:#e5655b} .seg.DIFFERENT_ENTITY{background:#3aa876} .seg.REVIEW{background:#e8b73b}
   .legend{display:flex;gap:14px;font-size:12px;color:var(--mute);margin-bottom:6px} .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
-  #drawer{position:fixed;top:0;right:0;width:min(520px,100%);height:100%;background:#fff;box-shadow:-8px 0 30px rgba(10,30,60,.18);transform:translateX(105%);transition:.2s;overflow:auto;padding:20px;z-index:10}
-  #drawer.open{transform:none} #drawer h2{margin:0 0 4px;font-size:16px} #drawer .x{position:absolute;right:14px;top:12px;border:0;background:none;font-size:22px;cursor:pointer;color:var(--mute)}
+  tr.detail{cursor:default} tr.detail:hover{background:none} tr.detail>td{background:#f7f9fc;border-bottom:2px solid #d5e0f2;padding:0}
+  .dpanel{position:relative;padding:16px 20px;border-left:4px solid var(--blue)} .dpanel h2{margin:0 0 4px;font-size:16px} .dpanel .x{position:absolute;right:14px;top:10px;border:0;background:none;font-size:22px;cursor:pointer;color:var(--mute)}
+  tr.sel{background:#eaf1fd}
+  button.btn.amber{background:#e0a100;color:#1f1600;font-weight:600} button.btn.amber:hover{background:#c78f00}
   dl{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;margin:14px 0} dt{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.4px;padding-top:2px} dd{margin:0;word-break:break-word}
   .chip{display:inline-block;background:#eef3fb;border:1px solid #d5e0f2;border-radius:5px;padding:1px 7px;margin:0 4px 4px 0}
   .form{display:grid;grid-template-columns:1fr 1fr;gap:10px} .form .full{grid-column:1/-1} .form label{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:2px}
@@ -107,7 +109,6 @@
   </section>
 </main>
 
-<aside id="drawer"><button class="x" id="dx">×</button><div id="dbody"></div></aside>
 
 <script>
 // Public by design: project URL + publishable (anon-role) key. Access is limited by RLS (see README – demo-only policies).
@@ -246,7 +247,7 @@ function reviewForm(r) {
     <div><label>Decision</label><select name="decision" id="rfDec"><option value="DIFFERENT_ENTITY">Clear (DIFFERENT_ENTITY)</option><option value="SAME_ENTITY">Confirm (SAME_ENTITY)</option><option value="REVIEW">Keep in REVIEW</option></select></div>
     <div class="full"><label>Reason code (POLICY.md)</label><select name="reason_code" id="rfCode"></select></div>
     <div class="full"><label>Note</label><textarea name="note" rows="3" maxlength="2000" placeholder="What did you check? Which records?"></textarea></div>
-    <div class="full"><button class="btn" type="submit">Submit review</button></div>
+    <div class="full"><button class="btn amber" type="submit">Submit review</button></div>
   </form><div id="rfMsg"></div>`;
 }
 
@@ -308,18 +309,26 @@ async function runResearch(hit) {
   btn.disabled = false;
 }
 
+function closeDrawer() { document.querySelectorAll("tr.detail").forEach(x => x.remove()); document.querySelectorAll("tr.sel").forEach(x => x.classList.remove("sel")); }
 function openDrawer(hit) {
   const r = rows.find(x => x.hit_id === hit); if (!r) return;
+  const tr = document.querySelector(`#rows tr[data-h="${CSS.escape(hit)}"]`);
+  const wasOpen = tr && tr.classList.contains("sel");
+  closeDrawer(); if (!tr || wasOpen) return;
+  tr.classList.add("sel");
+  const d = document.createElement("tr"); d.className = "detail";
+  d.innerHTML = `<td colspan="${tr.children.length}"><div class="dpanel"><button class="x" id="dx" title="Close">×</button><div id="dbody"></div></div></td>`;
+  tr.after(d); $("dx").onclick = closeDrawer;
   const prev = reviews.filter(x => x.hit_id === hit);
-  $("dbody").innerHTML = `<h2>Hit ${esc(hit)}</h2>${hitBlock(r)}${prev.length ? `<div class="note">${prev.length} analyst review(s) recorded.</div>` : ""}<button class="btn" id="dgo">Review this hit</button>
+  $("dbody").innerHTML = `<h2>Hit ${esc(hit)}</h2>${hitBlock(r)}${prev.length ? `<div class="note">${prev.length} analyst review(s) recorded.</div>` : ""}<button class="btn amber" id="dgo">Review this hit</button>
   <div class="card" style="margin-top:16px;border-color:#c9d6ee"><h3>External web research</h3>
     <div class="note" style="margin-bottom:10px"><b>External web research — analyst support only, not used by the screening decision.</b> Results come from a live web search (Tavily) and never change the system's decision or reason.</div>
     <button class="btn sec" id="wrgo">Research with Tavily</button> <span id="wrmsg" style="color:var(--mute);font-size:12px"></span>
     <div id="wrout" style="margin-top:10px"></div></div>`;
-  $("drawer").classList.add("open");
+  d.scrollIntoView({ block: "nearest", behavior: "smooth" });
   loadResearch(hit);
   $("wrgo").onclick = () => runResearch(hit);
-  $("dgo").onclick = () => { $("drawer").classList.remove("open"); setTab("queue"); $("qOpen").checked = false; renderQueue(); selectForReview(hit); };
+  $("dgo").onclick = () => { closeDrawer(); setTab("queue"); $("qOpen").checked = false; renderQueue(); selectForReview(hit); };
 }
 
 function setTab(t) {
@@ -332,9 +341,8 @@ document.querySelectorAll(".tab").forEach(b => b.onclick = () => setTab(b.datase
 $("prev").onclick = () => { page--; applyFilters(); }; $("next").onclick = () => { page++; applyFilters(); };
 $("qprev").onclick = () => { qpage--; renderQueue(); }; $("qnext").onclick = () => { qpage++; renderQueue(); };
 $("qOpen").onchange = () => { qpage = 0; renderQueue(); };
-$("rows").onclick = e => { const tr = e.target.closest("tr[data-h]"); if (tr) openDrawer(tr.dataset.h); };
+$("rows").onclick = e => { if (e.target.closest("tr.detail")) return; const tr = e.target.closest("tr[data-h]"); if (tr) openDrawer(tr.dataset.h); };
 $("qrows").onclick = e => { const tr = e.target.closest("tr[data-q]"); if (tr) selectForReview(tr.dataset.q); };
-$("dx").onclick = () => $("drawer").classList.remove("open");
 $("runSel").onchange = () => loadRun($("runSel").value).catch(showErr);
 ["fromDate", "toDate"].forEach(i => $(i).onchange = () => loadRuns().catch(showErr));
 loadRuns().catch(showErr);
