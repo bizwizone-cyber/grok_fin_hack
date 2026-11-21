@@ -908,9 +908,35 @@ KYC_SUCCESS_RE = re.compile(
     r"check complete|identity verification)\b",
     re.I,
 )
+# A KYC-channel note counts as a passed check unless it records a failure, so
+# this list is the only thing standing between a failed check and a "verified"
+# name or date of birth. A failed check read as passed can clear a real match
+# (NAME_MISMATCH_VERIFIED / DOB_MISMATCH), so the list is deliberately wide.
+# Words that also occur in passed notes ("expiry 2031", "no signs of fraud",
+# "no discrepancies") are only matched in phrases that state a failure.
 KYC_FAIL_RE = re.compile(
-    r"\b(?:rejected|failed|expired|declined|unsuccessful|denied|refused|invalid|pending|lapsed|"
-    r"not (?:approved|verified|passed|valid)|did not (?:pass|match)|could not|unable to|mismatch(?:ed)?)\b",
+    r"\b(?:"
+    # outright failure
+    r"reject(?:ed|ion|s)?|fail(?:ed|s|ure|ing)?|declin(?:ed|e|es)|unsuccessful(?:ly)?|"
+    r"den(?:ied|ial)|refus(?:ed|al)|invalid(?:ated)?|not (?:approved|verified|passed|valid|accepted|"
+    r"successful|completed|confirmed|cleared)|"
+    r"(?:did not|didn't|does not|doesn't|do not|don't|was not|wasn't|were not|weren't|could not|"
+    r"couldn't|cannot|can't|unable to|impossible to) (?:\w+ ){0,2}(?:pass|match|verif\w*|confirm\w*|"
+    r"approv\w*|complet\w*|accept\w*|validat\w*|read|process\w*|succeed\w*|authenticat\w*)|"
+    r"could not|unable to|mismatch(?:ed|es)?|no match|unverified|"
+    # expiry, stated as a failure
+    r"expired|lapsed|out of date|no longer valid|past (?:its |the )?expiry|expiry date (?:has )?passed|"
+    # not finished yet
+    r"pending|inconclusive|on hold|awaiting|in progress|incomplete|not yet|outstanding|"
+    r"abandoned|aborted|cancel(?:l)?ed|withdrawn|timed out|suspended|"
+    # sent back or escalated
+    r"resubmi(?:t|ssion|tted)|re-submi(?:t|ssion|tted)|(?:requires?|needs?|sent for|referred for|"
+    r"escalated (?:for|to)|flagged for) (?:\w+ ){0,2}review|under review|flagged|escalated|"
+    # unusable document
+    r"unreadable|illegible|blurr(?:y|ed)|"
+    # suspected forgery
+    r"suspected fraud|fraudulent|forged|forgery|tampered|counterfeit|altered document"
+    r")\b",
     re.I,
 )
 LIVED_RE = re.compile(
