@@ -792,7 +792,11 @@ KYC_SUCCESS_RE = re.compile(
     r"check complete|identity verification)\b",
     re.I,
 )
-KYC_FAIL_RE = re.compile(r"\b(?:rejected|failed|expired|declined|unsuccessful)\b", re.I)
+KYC_FAIL_RE = re.compile(
+    r"\b(?:rejected|failed|expired|declined|unsuccessful|denied|refused|invalid|pending|lapsed|"
+    r"not (?:approved|verified|passed|valid)|did not (?:pass|match)|could not|unable to|mismatch(?:ed)?)\b",
+    re.I,
+)
 LIVED_RE = re.compile(
     r"\b(?:liv(?:ed|ing)|residenc(?:y|e)|resid(?:ed|ing)|worked|working|"
     r"employ(?:ed|ment)|based in|household|home and|job in)\b",
@@ -829,7 +833,12 @@ DOC_COUNTRY_RE = re.compile(
 def parse_kyc_note(note):
     """Return dict or None for an approved identity check written only in a note."""
     text = note.get("text") or ""
-    if not text or not KYC_SUCCESS_RE.search(text) or KYC_FAIL_RE.search(text):
+        # A note in the KYC channel records a completed check; providers word a pass
+    # many ways ("passed", "approved", "matches", "finalized"), but a failure always
+    # says so. Outside the KYC channel, require an explicit success word.
+    if not text or KYC_FAIL_RE.search(text):
+        return None
+    if (note.get("channel") or "").lower() != "kyc" and not KYC_SUCCESS_RE.search(text):
         return None
     dob = None
     m = DOB_LABEL_RE.search(text)
