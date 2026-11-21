@@ -1,5 +1,35 @@
 # Review dashboard (Supabase) – demo tooling, not part of the scored entry point
 
+## Quick start
+
+**Live dashboard (no setup):** [open it here](https://bizwizone-cyber.github.io/grok_fin_hack/dashboard/index.html).
+It reads the runs already loaded in our Supabase project. Pick a run, filter the hits, click a row to open its details
+inline, use the amber **Review this hit** button to log an analyst review, or **Research with Tavily** for web context.
+
+**Run it locally:**
+```
+git clone https://github.com/bizwizone-cyber/grok_fin_hack.git && cd grok_fin_hack
+python3 -m http.server 8765 --directory dashboard
+# open http://localhost:8765/index.html
+```
+
+**Load a new run into the dashboard** (needs the project's secret key, kept local, never committed):
+```
+cp dashboard/.env.example dashboard/.env        # paste SUPABASE_KEY (Project Settings > API Keys > secret)
+python3 dashboard/push_run.py --data <path to dev folder> --label dev
+```
+Refresh the page and the new run appears in the run selector with its date, time, commit and runtime.
+
+**Set it up in your own Supabase project** (only if not using ours):
+1. Run `dashboard/schema.sql` in the SQL editor.
+2. Deploy the function: `supabase functions deploy tavily-research --no-verify-jwt --project-ref <ref>`
+   (source in `dashboard/functions/tavily-research/index.ts`).
+3. Add the secret `TAVILY_API_KEY` under Edge Functions > Secrets (a key from app.tavily.com, starts with `tvly-`).
+4. Put your project URL and publishable key in `dashboard/index.html` (`SUPABASE_URL` and `SUPABASE_KEY`, around line 115).
+
+**Rules:** the dashboard and Tavily never change a decision. `system/run` stays standard-library only and offline.
+Web research is shown to the analyst as context; only a human review records a different outcome.
+
 `system/run` is untouched: standard library only, offline, no Supabase. This folder is a separate
 tool that reads our **output rows** (hit_id, alert_id, decision, reason_code, customer_record_id,
 reason, evidence ids) – never the raw dev dataset – and shows them to a human reviewer.

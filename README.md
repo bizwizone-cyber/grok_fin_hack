@@ -46,8 +46,15 @@ For every sanctions, PEP or adverse-media hit raised against a customer, decide 
 - [ ] Submit the repo link and project name through the [submission portal](https://gb-fincrime-hackathon-11-2026.teamdeel.workers.dev/submit)
 
 ### Stretch, only if there's time
-- [ ] An analyst review screen in Supabase, showing the REVIEW queue with reasons and evidence (for the demo only, not part of `system/run`)
-- [ ] Tavily lookup button in the review screen (demo only)
+- [x] An analyst review screen in Supabase, showing the REVIEW queue with reasons and evidence (for the demo only, not part of `system/run`)
+- [x] Tavily lookup button in the review screen (demo only)
+
+
+## Review dashboard (demo, not part of the scored run)
+
+A Supabase-backed dashboard shows each run's alerts by date and time, the REVIEW queue, analyst reviews and optional
+Tavily web research. [Open the live dashboard](https://bizwizone-cyber.github.io/grok_fin_hack/dashboard/index.html),
+or see [`dashboard/README.md`](dashboard/README.md) for running it locally and loading new runs.
 
 ---
 
