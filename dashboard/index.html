@@ -284,11 +284,41 @@ function renderHistory() {
     : `<tr><td colspan="7" class="empty">No analyst reviews yet for this run.</td></tr>`;
 }
 
+function researchHtml(x) {
+  const res = Array.isArray(x.results) ? x.results : [];
+  return `<div class="chip" style="display:block;margin-bottom:8px"><span style="color:var(--mute)">${esc(fmt(x.created_at))} · query: <span class="mono">${esc(x.query)}</span></span>
+    ${(x.summary || x.answer) ? `<div style="margin:6px 0"><b>Summary:</b> ${esc(x.summary || x.answer)}</div>` : ""}
+    ${res.length ? `<ol style="margin:6px 0 0;padding-left:18px">${res.map(q => `<li style="margin-bottom:4px"><a href="${esc(/^https?:\/\//.test(q.url) ? q.url : "#")}" target="_blank" rel="noopener noreferrer">${esc(q.title || q.url)}</a><br><span style="color:var(--mute);font-size:12px">${esc(q.content || "")}</span></li>`).join("")}</ol>` : "<i>No results.</i>"}</div>`;
+}
+async function loadResearch(hit) {
+  const out = $("wrout"); if (!out || !run) return;
+  const { data, error } = await sb.from("web_research").select("*").eq("run_id", run.id).eq("hit_id", hit).order("created_at", { ascending: false }).limit(10);
+  if (error) { out.innerHTML = `<div class="note">Could not load previous research: ${esc(error.message)}</div>`; return; }
+  out.innerHTML = data.length ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--mute);margin-bottom:6px">Previous research (${data.length})</div>` + data.map(researchHtml).join("") : `<div style="color:var(--mute)">No web research for this hit yet.</div>`;
+}
+async function runResearch(hit) {
+  const btn = $("wrgo"), msg = $("wrmsg"); btn.disabled = true; msg.textContent = "Searching the web…";
+  try {
+    const resp = await fetch(SUPABASE_URL + "/functions/v1/tavily-research", { method: "POST", headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY }, body: JSON.stringify({ run_id: run.id, hit_id: hit }) });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(j.error || ("HTTP " + resp.status));
+    msg.textContent = "Done – " + (j.results || []).length + " result(s).";
+    await loadResearch(hit);
+  } catch (e) { msg.textContent = "Research failed: " + e.message; }
+  btn.disabled = false;
+}
+
 function openDrawer(hit) {
   const r = rows.find(x => x.hit_id === hit); if (!r) return;
   const prev = reviews.filter(x => x.hit_id === hit);
-  $("dbody").innerHTML = `<h2>Hit ${esc(hit)}</h2>${hitBlock(r)}${prev.length ? `<div class="note">${prev.length} analyst review(s) recorded.</div>` : ""}<button class="btn" id="dgo">Review this hit</button>`;
+  $("dbody").innerHTML = `<h2>Hit ${esc(hit)}</h2>${hitBlock(r)}${prev.length ? `<div class="note">${prev.length} analyst review(s) recorded.</div>` : ""}<button class="btn" id="dgo">Review this hit</button>
+  <div class="card" style="margin-top:16px;border-color:#c9d6ee"><h3>External web research</h3>
+    <div class="note" style="margin-bottom:10px"><b>External web research — analyst support only, not used by the screening decision.</b> Results come from a live web search (Tavily) and never change the system's decision or reason.</div>
+    <button class="btn sec" id="wrgo">Research with Tavily</button> <span id="wrmsg" style="color:var(--mute);font-size:12px"></span>
+    <div id="wrout" style="margin-top:10px"></div></div>`;
   $("drawer").classList.add("open");
+  loadResearch(hit);
+  $("wrgo").onclick = () => runResearch(hit);
   $("dgo").onclick = () => { $("drawer").classList.remove("open"); setTab("queue"); $("qOpen").checked = false; renderQueue(); selectForReview(hit); };
 }
 
