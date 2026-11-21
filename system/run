@@ -256,6 +256,78 @@ _add_country("Kyrgyzstan", "kg", "kgz")
 _add_country("Tajikistan", "tj", "tjk")
 _add_country("Palestine", "ps", "pse")
 
+# Spellings seen in hit profiles, and official long forms (ISO / UN style). The
+# comma forms must be listed whole: otherwise the last-part fallback reads
+# "Korea, Democratic People's Republic of" as South Korea and
+# "Virgin Islands, British" as the United Kingdom.
+_add_country("Macau", "macao special administrative region of china",
+             "macau special administrative region of china", "macao sar", "macau sar")
+_add_country("Hong Kong", "hong kong special administrative region of china", "hong kong sar")
+_add_country("Palestine", "palestina", "state of palestine", "palestine, state of",
+             "occupied palestinian territory", "palestinian territories")
+_add_country("British Virgin Islands", "vg", "vgb", "virgin islands, british",
+             "virgin islands (british)", "bvi")
+_add_country("Virgin Islands, U.S.", "virgin islands (u.s.)", "united states virgin islands")
+_add_country("North Korea", "korea, democratic people's republic of",
+             "korea, dem. people's rep.", "democratic people's republic of korea",
+             "korea (north)", "north korean")
+_add_country("South Korea", "korea, republic of", "korea, rep.", "korea (south)", "south korean")
+_add_country("Democratic Republic of the Congo", "congo, the democratic republic of the",
+             "congo, democratic republic of the", "congo, dem. rep.", "dr congo",
+             "democratic republic of congo", "congolese (drc)")
+_add_country("Congo", "republic of the congo", "congo, republic of the", "congo, rep.",
+             "congo-brazzaville", "republic of congo")
+_add_country("Syria", "syrian arab republic")
+_add_country("Iran", "iran, islamic republic of", "islamic republic of iran")
+_add_country("Laos", "lao people's democratic republic", "lao pdr")
+_add_country("Micronesia", "fm", "fsm", "micronesia, federated states of",
+             "federated states of micronesia")
+_add_country("Kyrgyzstan", "kyrgyz republic")
+_add_country("Slovakia", "slovak republic")
+_add_country("Brunei", "brunei darussalam")
+_add_country("North Macedonia", "republic of north macedonia",
+             "macedonia, the former yugoslav republic of", "fyrom")
+_add_country("Cape Verde", "cv", "cpv", "cabo verde")
+_add_country("Timor-Leste", "tl", "tls", "east timor", "timor leste")
+_add_country("Sao Tome and Principe", "stp", "são tomé and príncipe")
+_add_country("Saint Kitts and Nevis", "kn", "kna", "st kitts and nevis", "st. kitts and nevis")
+_add_country("Saint Lucia", "lc", "lca", "st lucia", "st. lucia")
+_add_country("Saint Vincent and the Grenadines", "vc", "vct", "st vincent and the grenadines",
+             "st. vincent and the grenadines")
+_add_country("Antigua and Barbuda", "ag", "atg")
+_add_country("Grenada", "gd", "grd")
+_add_country("Dominica", "dm", "dma")
+_add_country("Seychelles", "sc", "syc")
+_add_country("Comoros", "km", "com")
+_add_country("Mauritania", "mr", "mrt", "mauritanian")
+_add_country("Guinea-Bissau", "gw", "gnb", "guinea bissau")
+_add_country("Kiribati", "ki", "kir")
+_add_country("Marshall Islands", "mh", "mhl")
+_add_country("Palau", "pw", "plw")
+_add_country("Nauru", "nr", "nru")
+_add_country("Tuvalu", "tv", "tuv")
+_add_country("Western Sahara", "eh", "esh")
+_add_country("Aruba", "aw", "abw")
+_add_country("Curaçao", "cw", "cuw", "curacao")
+_add_country("Sint Maarten", "sx", "sxm")
+_add_country("Anguilla", "ai", "aia")
+_add_country("Montserrat", "ms", "msr")
+_add_country("Turks and Caicos Islands", "tc", "tca")
+_add_country("Greenland", "gl", "grl")
+_add_country("Faroe Islands", "fo", "fro")
+_add_country("French Polynesia", "pf", "pyf")
+_add_country("New Caledonia", "nc", "ncl")
+_add_country("American Samoa", "asm")
+_add_country("Cook Islands", "ck", "cok")
+_add_country("Falkland Islands", "fk", "flk", "falkland islands (malvinas)")
+_add_country("Saint Helena", "sh", "shn")
+_add_country("Réunion", "reu", "reunion")
+_add_country("Martinique", "mq", "mtq")
+_add_country("Guadeloupe", "gp", "glp")
+_add_country("French Guiana", "gf", "guf")
+_add_country("Mayotte", "yt", "myt")
+_add_country("Netherlands Antilles", "ant")
+
 # Longer names first when scanning free text.
 _COUNTRY_SCAN = tuple(sorted(
     ((k, v) for k, v in COUNTRY_MAP.items() if len(k) >= 4 and not k.isalpha() or len(k) >= 5 or " " in k or "'" in k or k in {
@@ -286,6 +358,19 @@ _COUNTRY_SCAN = tuple(sorted(
     ((k, v) for k, v in COUNTRY_MAP.items() if len(k) >= 4),
     key=lambda kv: -len(kv[0]),
 ))
+
+
+def _fold(text):
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
+
+
+# One pattern per alias. A country name ends at any character that is not a
+# letter or digit, so "passport (Bangladesh)" and "in Austria: 2008" are found.
+# Aliases are accent-folded because the text they are matched against is.
+_COUNTRY_SCAN_RE = tuple(
+    (re.compile(r"(?<![a-z0-9])" + re.escape(_fold(alias)) + r"(?![a-z0-9])"), canon)
+    for alias, canon in _COUNTRY_SCAN
+)
 
 # =============================================================================
 # Dates
@@ -491,20 +576,38 @@ def countries_from_values(values):
     return out
 
 
+def unrecognised_countries(values):
+    """Country values that are given but map to no known country.
+
+    "International", "Europe" and placeholders are not countries, so they are not
+    unrecognised. A value we cannot read might be the country both sides share,
+    so a location contradiction is not trusted while one exists.
+    """
+    out = []
+    for val in values:
+        items = val if isinstance(val, (list, tuple)) else [val]
+        for item in items:
+            if item is None or item == "":
+                continue
+            text = re.sub(r"\[.*?\]", "", strip_accents(str(item))).strip(" ,;.")
+            low = re.sub(r"\s+", " ", text.lower())
+            if not low or low in NOT_COUNTRIES or low in PLACEHOLDERS:
+                continue
+            if country_of(text) is None and text not in out:
+                out.append(text)
+    return out
+
+
 def countries_in_text(text):
     """Find canonical countries mentioned in free text (longest aliases first)."""
     if not text:
         return []
     low = " " + re.sub(r"\s+", " ", strip_accents(text).lower()) + " "
     found, seen = [], set()
-    for alias, canon in _COUNTRY_SCAN:
-        # word-boundary-ish
-        pat = " " + alias + " "
-        # also allow "in Nigeria." etc — punctuation already not in alias
-        if pat in low or (" " + alias + ",") in low or (" " + alias + ".") in low or (" " + alias + ";") in low:
-            if canon not in seen:
-                seen.add(canon)
-                found.append(canon)
+    for pattern, canon in _COUNTRY_SCAN_RE:
+        if canon not in seen and pattern.search(low):
+            seen.add(canon)
+            found.append(canon)
     return found
 
 
@@ -1113,6 +1216,7 @@ def latest_approved_identity(bank, records, notes):
                 "verified_name": k.get("verified_name"),
                 "verified_dob": parse_date(k.get("verified_dob")),
                 "document_country": country_of(k.get("document_country")),
+                "document_country_raw": k.get("document_country"),
                 "document_number": k.get("document_number"),
                 "checked_at": parse_date(k.get("checked_at")),
                 "result": "approved",
@@ -1310,6 +1414,10 @@ def build_person(records, bank, screened=None):
         if ctry not in seen_c:
             seen_c.add(ctry)
             countries.append(ctry)
+    unrecognised = unrecognised_countries(
+        [c.get(k) for c in records for k in ("residence_country", "nationality")]
+        + [ident.get("document_country_raw") if ident else None]
+    )
     etypes = {(c.get("entity_type") or "") for c in records}
     if "Company" in etypes and "Individual" not in etypes:
         etype = "Company"
@@ -1336,6 +1444,7 @@ def build_person(records, bank, screened=None):
         "dob": dob,
         "declared_dobs": declared_dobs,
         "countries": countries,
+        "unrecognised_countries": unrecognised,
         "lived_note_ids": [n for n in lived_ids if n],
         "entity_type": etype,
         "incorporation": incorp,
@@ -1508,6 +1617,17 @@ def hit_countries(hit):
     return countries_from_values(vals)
 
 
+def hit_unrecognised_countries(hit):
+    vals = [hit.get(k) for k in ("countries", "nationality", "citizenship", "place_of_birth")]
+    for addr in hit.get("addresses") or []:
+        # An address is unrecognised only when no part of it names a country.
+        if addr and not last_address_country(addr):
+            parts = [p for p in re.sub(r"\[.*?\]", "", str(addr)).split(",") if p.strip()]
+            if parts:
+                vals.append(parts[-1])
+    return unrecognised_countries(vals)
+
+
 def hit_names(hit):
     names = []
     for key in ("name", "best_matching_name", "first_name", "middle_name", "last_name"):
@@ -1661,6 +1781,7 @@ def extract_hit(hit, bank):
         "names": names,
         "entity_type": etype,
         "countries": countries,
+        "unrecognised_countries": hit_unrecognised_countries(hit),
         "dobs": dobs,
         "structured_dobs": structured_dobs,
         "dob_sources": dob_sources,
@@ -1914,6 +2035,14 @@ def decide_one(person, hitf, alert, bank):
     d_ok = dob_agrees(person, hitf)
     l_ok = location_agrees(person, hitf)
     l_mis = location_mismatch(person, hitf)
+    # Safety valve: if either side has a country value we cannot read, it might be
+    # the country they share, so the recognised countries differing proves nothing.
+    # Such a hit is neither cleared nor confirmed on location.
+    unread = list(person.get("unrecognised_countries") or []) + list(
+        hitf.get("unrecognised_countries") or [])
+    loc_unsure = l_mis and bool(unread)
+    if loc_unsure:
+        l_mis = False
 
     # Location mismatch, except when name and DOB agree -> REVIEW
     if l_mis and not (n_ok and d_ok):
@@ -1932,7 +2061,7 @@ def decide_one(person, hitf, alert, bank):
                 f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. The customer's name agrees with the hit's name {(hitf.get('names') or ['the listed name'])[0]}.",
             )
     else:
-        if n_ok and d_ok and not l_mis:
+        if n_ok and d_ok and not l_mis and not loc_unsure:
             # name+DOB agree; country difference would have been REVIEW via l_mis and (n_ok and d_ok)
             key = "NAME_DOB_LOCATION_MATCH" if l_ok else "NAME_DOB_MATCH"
             ciso = person.get("dob").iso() if person.get("dob") else "unknown"
@@ -1954,6 +2083,13 @@ def decide_one(person, hitf, alert, bank):
     if missing:
         detail += ", and " + " and ".join(missing)
     detail += ", so the hit can be neither cleared nor confirmed."
+    if loc_unsure:
+        detail = (
+            f"The recognised countries differ (customer: {', '.join(person.get('countries') or [])}; "
+            f"hit: {', '.join(hitf.get('countries') or [])}), but the country value "
+            f"{', '.join(repr(u) for u in unread)} could not be read, so location cannot clear the hit. "
+            + detail
+        )
     if l_ok:
         detail = (
             f"Both the customer and the hit are linked to {', '.join(sorted(set(person.get('countries') or []) & set(hitf.get('countries') or [])))}. "

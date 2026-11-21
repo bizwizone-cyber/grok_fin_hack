@@ -137,6 +137,6 @@ Normalise names first (lowercase, strip accents with `unicodedata`, drop punctua
 7. **Name and DOB match** (person) or **name and country or registration match** (company), with no contradiction → `SAME_ENTITY`
 8. **Everything else** → `REVIEW`
 
-**Change:** the team's "zero country overlap → DIFFERENT_ENTITY" rule is removed. People move and have more than one nationality, so a country mismatch is only supporting evidence alongside another contradiction.
+**Correction:** `POLICY.md` principle 6 *does* clear a hit when every country tied to the customer differs from every country tied to the hit (`LOCATION_MISMATCH`), unless name and date of birth agree, which makes it `REVIEW`. `system/run` follows the policy. As a safety valve, a country value the system cannot read blocks a location clearance (the hit goes to `REVIEW`).
 
 Reason codes above are descriptions. **Use the exact codes from `POLICY.md`.**

@@ -6,7 +6,7 @@
 system/run <data_folder> <output_file>
 ```
 
-A run on the development set (819 hits, ~250k supporting rows) takes about **26 seconds** on this machine and costs **$0**.
+A run on the development set (819 hits, ~250k supporting rows) takes about **16 seconds** on this machine and costs **$0**.
 
 ## Architecture
 
@@ -43,14 +43,15 @@ The comparison is Splink-inspired, stdlib-only: each field (name, date of birth,
 2. If that link leads to more than one person, the screened name, date of birth, country and city pick between them (principle 2). Without a link, those same screened details are used to search the system of record. We never use another customer's records.
 3. Records that share a phone number **and** the same full date of birth, or the same document number on approved identity checks, belong to one person, transitively (principle 3). A shared phone or address alone does not merge them.
 4. The most recent **approved** identity check of that person supplies the verified legal name, date of birth and document country, whether it sits in `kyc_checks` or only in an onboarding note. Rejected and expired checks are ignored. Verified values beat declared ones.
-5. Countries tied to the customer are residence and nationality on all of their records, the approved identity-document country, and places the notes say they lived.
+5. Countries tied to the customer are residence and nationality on all of their records, the approved identity-document country, and places the notes say they lived. In free text a country name may be followed by any punctuation, so "passport (Bangladesh)" and "in Austria: 2008" both count.
 6. If more than one person still fits the alert, we decide the hit for each. If they all lead to the same decision, we give it; otherwise the decision is `REVIEW` with `AMBIGUOUS_CUSTOMER_RECORD`. Either way `customer_record_id` is `AMBIGUOUS`. When one person has several records, any of them is accepted.
 
 ## How we find the listed person
 
 - Names: `name`, aliases, and `best_matching_name`.
 - Dates of birth: the `dobs` field; if it is empty, an age at a date in the **first paragraph** of `profile_notes` (someone aged 45 in March 2019 was born in 1973 or 1974); if still empty, web search results for the name. A search result is used only when it describes the same kind of listing in a country tied to the hit. The phrases are those in principle 5 ("a sanctioned individual", "a politically exposed person", and so on).
-- Countries: `countries`, `nationality`, `citizenship`, the last part of each address, and `place_of_birth`. "International" and "Europe" are not countries. Codes and nationality adjectives map to the same country as the full name; territories stay their own country.
+- Countries: `countries`, `nationality`, `citizenship`, the last part of each address, and `place_of_birth`. "International" and "Europe" are not countries. Codes and nationality adjectives map to the same country as the full name; territories stay their own country. Official long forms are listed whole, so "Korea, Democratic People's Republic of" is North Korea and "Virgin Islands, British" is the British Virgin Islands, not the United Kingdom.
+- **Unreadable countries never clear a hit.** If either side has a country value the system cannot map (a spelling it has not seen), that value might be the country both share. The hit is then neither cleared nor confirmed on location; it goes to `REVIEW`, and the reason names the value that could not be read. Missing a country can only cost a review (3 points), never an unsafe clearance (60).
 - Dated reports are exactly the lines `According to …; September 10, 2025: …` (day optional, as in `June 2014:`). Other wordings do not count.
 - Date of death: `deceased_date`, or a death date written in the profile.
 - For companies, only the `dobs` field is an incorporation date.
